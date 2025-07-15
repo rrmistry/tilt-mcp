@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2024-01-15
+
+### Fixed
+- Fixed type mismatch issue where MCP tools were returning dictionaries instead of JSON strings
+- Both `get_all_resources` and `get_resource_logs` now return JSON-formatted strings
+
+### Changed
+- Tool return types changed from `dict` and `list[dict]` to `str` (JSON format)
+
 ## [0.1.1] - 2024-01-15
 
 ### Fixed
@@ -38,4 +47,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.1.0]: https://github.com/aryan-agrawal-glean/tilt-mcp/releases/tag/v0.1.0
 [0.1.1]: https://github.com/aryan-agrawal-glean/tilt-mcp/releases/tag/v0.1.1
-[Unreleased]: https://github.com/aryan-agrawal-glean/tilt-mcp/compare/v0.1.1...HEAD
+[0.1.2]: https://github.com/aryan-agrawal-glean/tilt-mcp/releases/tag/v0.1.2
+[Unreleased]: https://github.com/aryan-agrawal-glean/tilt-mcp/compare/v0.1.2...HEAD

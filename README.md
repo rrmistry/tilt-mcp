@@ -56,9 +56,7 @@ Add the following to your Claude Desktop configuration file:
 {
   "mcpServers": {
     "tilt": {
-      "command": "python",
-      "args": ["-m", "tilt_mcp.server"],
-      "env": {}
+      "command": "tilt-mcp"
     }
   }
 }

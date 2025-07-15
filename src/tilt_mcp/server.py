@@ -94,7 +94,7 @@ def get_enabled_resources() -> list[dict]:
 
 
 @mcp.tool()
-async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) -> dict[str, str]:
+async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) -> str:
     """
     Get logs from a specific Tilt resource
     
@@ -103,7 +103,7 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
         tail: The number of lines of logs to return (default: 1000)
         
     Returns:
-        dict[str, str]: A dictionary containing the logs
+        str: JSON string containing the logs
         
     Raises:
         ValueError: If the resource is not found
@@ -123,7 +123,7 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
 
         logs = result.stdout
         if not logs:
-            return {'logs': f'No logs available for resource: {resource_name}'}
+            return json.dumps({'logs': f'No logs available for resource: {resource_name}'})
 
         # Return only the last 'tail' lines
         log_lines = logs.splitlines()
@@ -131,7 +131,7 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
             log_lines = log_lines[-tail:]
 
         logger.info(f'Successfully retrieved {len(log_lines)} log lines')
-        return {'logs': '\n'.join(log_lines)}
+        return json.dumps({'logs': '\n'.join(log_lines)})
 
     except subprocess.CalledProcessError as e:
         if 'No such resource' in e.stderr or 'not found' in e.stderr.lower():
@@ -145,12 +145,12 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
 
 
 @mcp.tool()
-async def get_all_resources(ctx: Context) -> list[dict]:
+async def get_all_resources(ctx: Context) -> str:
     """
     Get all enabled Tilt resources
     
     Returns:
-        list[dict]: A list of dictionaries containing resource information:
+        str: JSON string containing a list of resource information:
             - name: Resource name
             - type: Resource type (e.g., 'k8s', 'local', etc.)
             - status: Current runtime status
@@ -162,7 +162,7 @@ async def get_all_resources(ctx: Context) -> list[dict]:
     logger.info('Fetching all enabled resources')
     resources = get_enabled_resources()
     logger.info(f'Found {len(resources)} enabled resources')
-    return resources
+    return json.dumps(resources, indent=2)
 
 
 def main():
