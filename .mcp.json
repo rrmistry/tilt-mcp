@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tilt": {
+      "type": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--network=host", "--env=TILT_HOST=host.docker.internal", "aryanagrawalglean/tilt-mcp:latest"],
+      "env": {}
+    }
+  }
+}
