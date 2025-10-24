@@ -33,8 +33,6 @@ RUN apt-get update && apt-get install -y \
     sudo \
     # Run the Tilt install script
     && curl -fsSL https://raw.githubusercontent.com/tilt-dev/tilt/master/scripts/install.sh | bash \
-    && apt-get remove -y curl \
-    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -49,9 +47,15 @@ COPY --from=builder /app/dist/*.whl /tmp/
 # Install the package
 RUN pip install --no-cache-dir /tmp/*.whl && rm -rf /tmp/*.whl
 
-# Create log directory
+# Create log directory and .tilt-dev directory for mounting
 RUN mkdir -p /home/mcp-user/.tilt-mcp && \
-    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp
+    mkdir -p /home/mcp-user/.tilt-dev && \
+    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp && \
+    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-dev
+
+# This host variable combined with "--network=host" when calling docker run will allow the MCP server to connect to Tilt outside the container
+ENV TILT_HOST=host.docker.internal
+ENV TILT_PORT=10350
 
 # Switch to non-root user
 USER mcp-user

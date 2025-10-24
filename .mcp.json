@@ -3,7 +3,14 @@
     "tilt": {
       "type": "stdio",
       "command": "docker",
-      "args": ["run", "-i", "--rm", "--network=host", "--env=TILT_HOST=host.docker.internal", "aryanagrawalglean/tilt-mcp:latest"],
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
+        "aryanagrawalglean/tilt-mcp:latest"
+      ],
       "env": {}
     }
   }
