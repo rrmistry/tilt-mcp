@@ -48,7 +48,7 @@ jobs:
         run: |
           # Build a temporary image to get the Tilt version
           docker build --target runtime -t temp-tilt-check .
-          TILT_VERSION=$(docker run --rm --entrypoint=tilt temp-tilt-check --version | grep -oP 'v\d+\.\d+\.\d+' || echo "latest")
+          TILT_VERSION=$(docker run --rm --entrypoint=tilt temp-tilt-check version | grep -oP 'v\d+\.\d+\.\d+' || echo "latest")
           echo "version=${TILT_VERSION}" >> $GITHUB_OUTPUT
           echo "Detected Tilt version: ${TILT_VERSION}"
 

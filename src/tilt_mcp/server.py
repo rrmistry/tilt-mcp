@@ -148,14 +148,14 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
 async def get_all_resources(ctx: Context) -> str:
     """
     Get all enabled Tilt resources
-    
+
     Returns:
         str: JSON string containing a list of resource information:
             - name: Resource name
             - type: Resource type (e.g., 'k8s', 'local', etc.)
             - status: Current runtime status
             - updateStatus: Current update status
-            
+
     Raises:
         RuntimeError: If there's an error fetching resources
     """
@@ -163,6 +163,52 @@ async def get_all_resources(ctx: Context) -> str:
     resources = get_enabled_resources()
     logger.info(f'Found {len(resources)} enabled resources')
     return json.dumps(resources, indent=2)
+
+
+@mcp.tool()
+async def trigger_resource(ctx: Context, resource_name: str) -> str:
+    """
+    Trigger a Tilt resource to rebuild/update
+
+    Args:
+        resource_name: The name of the Tilt resource to trigger
+
+    Returns:
+        str: JSON string containing the trigger result with a success message
+
+    Raises:
+        ValueError: If the resource is not found
+        RuntimeError: If there's an error triggering the resource
+    """
+    logger.info(f'Triggering resource: {resource_name}')
+
+    try:
+        cmd = ['tilt', 'trigger', resource_name]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Successfully triggered resource: {resource_name}')
+        return json.dumps({
+            'success': True,
+            'resource': resource_name,
+            'message': f'Resource "{resource_name}" has been triggered',
+            'output': result.stdout.strip() if result.stdout else ''
+        })
+
+    except subprocess.CalledProcessError as e:
+        if 'No such resource' in e.stderr or 'not found' in e.stderr.lower():
+            logger.error(f'Resource not found: {resource_name}')
+            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
+        logger.error(f'Error triggering resource: {e.stderr}')
+        raise RuntimeError(f'Failed to trigger resource: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error triggering resource: {str(e)}')
+        raise RuntimeError(f'Error triggering resource: {str(e)}')
 
 
 def main():

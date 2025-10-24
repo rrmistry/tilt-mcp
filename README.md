@@ -20,10 +20,11 @@ The Tilt MCP server exposes the following tools to MCP clients:
 |------|-------------|------------|
 | `get_all_resources` | Lists all enabled Tilt resources with their status | None |
 | `get_resource_logs` | Fetches logs from a specific resource | `resource_name` (required), `tail` (optional, default: 1000) |
+| `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required) |
 
 ### Tool Details
 
-Both tools return structured JSON responses and include comprehensive error handling:
+All tools return structured JSON responses and include comprehensive error handling:
 - **Resource Not Found**: Raises `ValueError` with helpful message
 - **Tilt Connection Issues**: Raises `RuntimeError` with Tilt error details
 - **JSON Parsing Errors**: Provides detailed parsing error information
@@ -34,6 +35,7 @@ All tool executions are logged to `~/.tilt-mcp/tilt_mcp.log` for debugging.
 
 - 🔍 **Resource Discovery**: List all active Tilt resources with their current status
 - 📜 **Log Retrieval**: Fetch recent logs from any Tilt resource
+- 🔄 **Resource Triggering**: Manually trigger Tilt resources to rebuild/update
 - 🛡️ **Type Safety**: Built with Python type hints for better IDE support
 - 🚀 **Async Support**: Fully asynchronous implementation using FastMCP
 - 📊 **Structured Output**: Returns well-formatted JSON responses
@@ -95,7 +97,6 @@ Add the following to your Claude Desktop configuration file:
         "--rm",
         "-v",
         "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
-        "--network=host",
         "ghcr.io/rrmistry/tilt-mcp:latest"
       ],
       "env": {}
@@ -195,6 +196,30 @@ Example response:
 }
 ```
 
+### `trigger_resource`
+
+Triggers a Tilt resource to rebuild/update. This is useful for manually triggering resources that have `trigger_mode: manual` or for forcing a rebuild.
+
+Parameters:
+- `resource_name` (string, required): Name of the Tilt resource to trigger
+
+Example request:
+```json
+{
+  "resource_name": "backend"
+}
+```
+
+Example response:
+```json
+{
+  "success": true,
+  "resource": "backend",
+  "message": "Resource \"backend\" has been triggered",
+  "output": ""
+}
+```
+
 ## Example Prompts
 
 Here are some example prompts you can use with an AI assistant that has access to this MCP server:
@@ -206,6 +231,9 @@ Here are some example prompts you can use with an AI assistant that has access t
 - "Help me debug why the frontend service is crashing"
 - "Compare the status of frontend and backend services"
 - "Show me error logs from any failing services"
+- "Trigger a rebuild of the backend service"
+- "Rebuild the frontend and show me the logs"
+- "Trigger all services that have errors"
 
 ## Development
 
