@@ -12,6 +12,24 @@ The Tilt MCP server allows Large Language Models (LLMs) and AI assistants to int
 
 This enables AI-powered development workflows, debugging assistance, and automated monitoring of your Tilt-managed services.
 
+## Available MCP Tools
+
+The Tilt MCP server exposes the following tools to MCP clients:
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `get_all_resources` | Lists all enabled Tilt resources with their status | None |
+| `get_resource_logs` | Fetches logs from a specific resource | `resource_name` (required), `tail` (optional, default: 1000) |
+
+### Tool Details
+
+Both tools return structured JSON responses and include comprehensive error handling:
+- **Resource Not Found**: Raises `ValueError` with helpful message
+- **Tilt Connection Issues**: Raises `RuntimeError` with Tilt error details
+- **JSON Parsing Errors**: Provides detailed parsing error information
+
+All tool executions are logged to `~/.tilt-mcp/tilt_mcp.log` for debugging.
+
 ## Features
 
 - 🔍 **Resource Discovery**: List all active Tilt resources with their current status
@@ -120,6 +138,14 @@ Or use it with the MCP CLI:
 mcp run python -m tilt_mcp.server
 ```
 
+### Checking Version
+
+To check the installed version of tilt-mcp:
+
+```bash
+tilt-mcp --version
+```
+
 ## Usage
 
 Once configured, the Tilt MCP server provides the following tools:
@@ -178,6 +204,8 @@ Here are some example prompts you can use with an AI assistant that has access t
 - "Which services are failing or have errors?"
 - "Show me the recent logs from all services that aren't healthy"
 - "Help me debug why the frontend service is crashing"
+- "Compare the status of frontend and backend services"
+- "Show me error logs from any failing services"
 
 ## Development
 
@@ -238,10 +266,30 @@ mypy src
 
 ### Debug Logging
 
+The MCP server logs all operations to `~/.tilt-mcp/tilt_mcp.log`. The log includes:
+- Server startup/shutdown events
+- Resource fetch operations
+- Log retrieval operations
+- Error messages with full details
+
 To enable debug logging, set the environment variable:
 
 ```bash
 export LOG_LEVEL=DEBUG
+```
+
+**Log Format**: `timestamp - logger_name - level - message`
+
+**Viewing Logs**:
+```bash
+# View recent logs
+tail -f ~/.tilt-mcp/tilt_mcp.log
+
+# Search for errors
+grep ERROR ~/.tilt-mcp/tilt_mcp.log
+
+# View logs from a specific resource fetch
+grep "get_all_resources" ~/.tilt-mcp/tilt_mcp.log
 ```
 
 ## Contributing
