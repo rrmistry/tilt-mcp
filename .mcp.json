@@ -9,7 +9,8 @@
         "--rm",
         "-v",
         "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
-        "aryanagrawalglean/tilt-mcp:latest"
+        "--network=host",
+        "ghcr.io/rrmistry/tilt-mcp:latest"
       ],
       "env": {}
     }

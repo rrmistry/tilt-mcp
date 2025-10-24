@@ -28,29 +28,71 @@ This enables AI-powered development workflows, debugging assistance, and automat
 
 ## Installation
 
-### From PyPI (recommended)
+You can install Tilt MCP in three ways:
+
+### Option 1: Using Docker (Recommended for macOS/Windows)
+
+The Docker-based installation requires no Python setup and is automatically kept up-to-date with monthly builds.
+
+See the [MCP Configuration](#configuration) section below for setup instructions.
+
+### Option 2: From PyPI
 
 ```bash
 pip install tilt-mcp
 ```
 
-### From Source
+**Best for:** Linux users or when you prefer local installation
+
+### Option 3: From Source
 
 ```bash
-git clone https://github.com/aryan-agrawal-glean/tilt-mcp.git
+git clone https://github.com/rrmistry/tilt-mcp.git
 cd tilt-mcp
 pip install -e .
 ```
 
+**Best for:** Development or testing local changes
+
 ## Configuration
 
-### For Claude Desktop
+### Docker Configuration (Recommended for macOS/Windows)
 
 Add the following to your Claude Desktop configuration file:
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 **Linux**: `~/.config/claude/claude_desktop_config.json`
+
+**For macOS/Linux:**
+```json
+{
+  "mcpServers": {
+    "tilt": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
+        "--network=host",
+        "ghcr.io/rrmistry/tilt-mcp:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**For Windows:**
+
+Similar to the macOS/Linux configuration, but replace `${HOME}` with `%USERPROFILE%` for CMD or `${USERPROFILE}` for PowerShell for the volume mount for `~/.tilt-dev`.
+
+### Local Installation Configuration
+
+If you installed via PyPI or from source, use this simpler configuration:
 
 ```json
 {
@@ -61,6 +103,8 @@ Add the following to your Claude Desktop configuration file:
   }
 }
 ```
+
+Making sure that `tilt-mcp` is in your PATH.
 
 ### For Development/Testing
 
@@ -187,6 +231,11 @@ mypy src
    - Verify the MCP client configuration is correct
    - Check the logs at `~/.tilt-mcp/tilt_mcp.log`
 
+4. **Docker based tilt-mcp not able to connect**
+    - There is a known issue with tilt https://github.com/tilt-dev/tilt/issues/6612 that prevents docker based tilt-mcp from connecting to the Tilt API server.
+    - A workaround is to mount the `~/.tilt-dev` directory in the container.
+    - Check if your local tilt instance is creating this directory and where it is located.
+
 ### Debug Logging
 
 To enable debug logging, set the environment variable:
@@ -216,5 +265,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - 📧 Email: aryan.agrawal@glean.com
-- 💬 Issues: [GitHub Issues](https://github.com/aryan-agrawal-glean/tilt-mcp/issues)
-- 📖 Docs: [GitHub Wiki](https://github.com/aryan-agrawal-glean/tilt-mcp/wiki) 
+- 💬 Issues: [GitHub Issues](https://github.com/rrmistry/tilt-mcp/issues)
