@@ -4,7 +4,6 @@ import argparse
 import json
 import logging
 import subprocess
-import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -20,8 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_dir / "tilt_mcp.log", mode='a'),
-        logging.StreamHandler(sys.stdout)
+        logging.FileHandler(log_dir / "tilt_mcp.log", mode='a')
     ]
 )
 logger = logging.getLogger(__name__)

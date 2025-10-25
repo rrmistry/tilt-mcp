@@ -8,7 +8,10 @@
         "-i",
         "--rm",
         "-v",
-        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
+        "${HOME}/.tilt-dev:/tmp/host-tilt-dev:ro",
+        "-v",
+        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "--network=host",
         "ghcr.io/rrmistry/tilt-mcp:latest"
       ],
       "env": {}

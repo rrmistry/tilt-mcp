@@ -96,7 +96,10 @@ Add the following to your Claude Desktop configuration file:
         "-i",
         "--rm",
         "-v",
-        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
+        "${HOME}/.tilt-dev:/tmp/host-tilt-dev:ro",
+        "-v",
+        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "--network=host",
         "ghcr.io/rrmistry/tilt-mcp:latest"
       ],
       "env": {}
@@ -105,9 +108,32 @@ Add the following to your Claude Desktop configuration file:
 }
 ```
 
-**For Windows:**
+**For Windows (PowerShell):**
+```json
+{
+  "mcpServers": {
+    "tilt": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${env:USERPROFILE}\\.tilt-dev:/tmp/host-tilt-dev:ro",
+        "-v",
+        "${env:USERPROFILE}\\.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "--network=host",
+        "ghcr.io/rrmistry/tilt-mcp:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
 
-Similar to the macOS/Linux configuration, but replace `${HOME}` with `%USERPROFILE%` for CMD or `${USERPROFILE}` for PowerShell for the volume mount for `~/.tilt-dev`.
+**For Windows (CMD):**
+Use `%USERPROFILE%` instead of `${env:USERPROFILE}` in the volume mount paths.
 
 ### Local Installation Configuration
 

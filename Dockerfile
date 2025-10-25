@@ -47,11 +47,13 @@ COPY --from=builder /app/dist/*.whl /tmp/
 # Install the package
 RUN pip install --no-cache-dir /tmp/*.whl && rm -rf /tmp/*.whl
 
-# Create log directory and .tilt-dev directory for mounting
+# Copy entrypoint script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Create log directory
 RUN mkdir -p /home/mcp-user/.tilt-mcp && \
-    mkdir -p /home/mcp-user/.tilt-dev && \
-    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp && \
-    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-dev
+    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp
 
 # This host variable combined with "--network=host" when calling docker run will allow the MCP server to connect to Tilt outside the container
 ENV TILT_HOST=host.docker.internal
@@ -63,5 +65,8 @@ USER mcp-user
 # Set environment variables for MCP
 ENV MCP_TRANSPORT=stdio
 
+# Use entrypoint script to copy and modify tilt config
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
 # Default command to run the MCP server
-ENTRYPOINT ["tilt-mcp"]
+CMD ["tilt-mcp"]
