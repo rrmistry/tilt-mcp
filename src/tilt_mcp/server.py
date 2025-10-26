@@ -209,6 +209,210 @@ async def trigger_resource(ctx: Context, resource_name: str) -> str:
         raise RuntimeError(f'Error triggering resource: {str(e)}')
 
 
+@mcp.tool()
+async def enable_resource(ctx: Context, resource_names: list[str], enable_only: bool = False) -> str:
+    """
+    Enable one or more Tilt resources
+
+    Args:
+        resource_names: List of resource names to enable
+        enable_only: If True, enable these resources and disable all others
+
+    Returns:
+        str: JSON string containing the result with a success message
+
+    Raises:
+        ValueError: If resource_names is empty
+        RuntimeError: If there's an error enabling resources
+    """
+    if not resource_names:
+        raise ValueError('At least one resource name must be provided')
+
+    logger.info(f'Enabling resources: {resource_names}, only={enable_only}')
+
+    try:
+        cmd = ['tilt', 'enable']
+        if enable_only:
+            cmd.append('--only')
+        cmd.extend(resource_names)
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Successfully enabled resources: {resource_names}')
+        return json.dumps({
+            'success': True,
+            'resources': resource_names,
+            'enable_only': enable_only,
+            'message': f'Resources {resource_names} have been enabled' + (' (all others disabled)' if enable_only else ''),
+            'output': result.stdout.strip() if result.stdout else ''
+        })
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f'Error enabling resources: {e.stderr}')
+        raise RuntimeError(f'Failed to enable resources: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error enabling resources: {str(e)}')
+        raise RuntimeError(f'Error enabling resources: {str(e)}')
+
+
+@mcp.tool()
+async def disable_resource(ctx: Context, resource_names: list[str]) -> str:
+    """
+    Disable one or more Tilt resources
+
+    Args:
+        resource_names: List of resource names to disable
+
+    Returns:
+        str: JSON string containing the result with a success message
+
+    Raises:
+        ValueError: If resource_names is empty
+        RuntimeError: If there's an error disabling resources
+    """
+    if not resource_names:
+        raise ValueError('At least one resource name must be provided')
+
+    logger.info(f'Disabling resources: {resource_names}')
+
+    try:
+        cmd = ['tilt', 'disable']
+        cmd.extend(resource_names)
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Successfully disabled resources: {resource_names}')
+        return json.dumps({
+            'success': True,
+            'resources': resource_names,
+            'message': f'Resources {resource_names} have been disabled',
+            'output': result.stdout.strip() if result.stdout else ''
+        })
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f'Error disabling resources: {e.stderr}')
+        raise RuntimeError(f'Failed to disable resources: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error disabling resources: {str(e)}')
+        raise RuntimeError(f'Error disabling resources: {str(e)}')
+
+
+@mcp.tool()
+async def describe_resource(ctx: Context, resource_name: str) -> str:
+    """
+    Get detailed information about a specific Tilt resource
+
+    Args:
+        resource_name: The name of the resource to describe
+
+    Returns:
+        str: Detailed information about the resource in text format
+
+    Raises:
+        ValueError: If the resource is not found
+        RuntimeError: If there's an error describing the resource
+    """
+    logger.info(f'Describing resource: {resource_name}')
+
+    try:
+        cmd = ['tilt', 'describe', 'uiresource', resource_name]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Successfully described resource: {resource_name}')
+        return result.stdout
+
+    except subprocess.CalledProcessError as e:
+        if 'not found' in e.stderr.lower():
+            logger.error(f'Resource not found: {resource_name}')
+            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
+        logger.error(f'Error describing resource: {e.stderr}')
+        raise RuntimeError(f'Failed to describe resource: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error describing resource: {str(e)}')
+        raise RuntimeError(f'Error describing resource: {str(e)}')
+
+
+@mcp.tool()
+async def wait_for_resource(
+    ctx: Context,
+    resource_name: str,
+    condition: str = 'Ready',
+    timeout_seconds: int = 30
+) -> str:
+    """
+    Wait for a Tilt resource to reach a specific condition
+
+    Args:
+        resource_name: The name of the resource to wait for
+        condition: The condition to wait for (default: 'Ready'). Can be 'Ready', 'Updated', etc.
+        timeout_seconds: Maximum time to wait in seconds (default: 30)
+
+    Returns:
+        str: JSON string containing the result
+
+    Raises:
+        ValueError: If the resource is not found
+        RuntimeError: If there's an error or timeout waiting for the resource
+    """
+    logger.info(f'Waiting for resource: {resource_name}, condition: {condition}, timeout: {timeout_seconds}s')
+
+    try:
+        cmd = [
+            'tilt', 'wait',
+            f'uiresource/{resource_name}',
+            f'--for=condition={condition}',
+            f'--timeout={timeout_seconds}s'
+        ]
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Resource {resource_name} reached condition {condition}')
+        return json.dumps({
+            'success': True,
+            'resource': resource_name,
+            'condition': condition,
+            'message': f'Resource "{resource_name}" reached condition "{condition}"',
+            'output': result.stdout.strip() if result.stdout else ''
+        })
+
+    except subprocess.CalledProcessError as e:
+        if 'not found' in e.stderr.lower():
+            logger.error(f'Resource not found: {resource_name}')
+            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
+        elif 'timed out' in e.stderr.lower() or 'timeout' in e.stderr.lower():
+            logger.error(f'Timeout waiting for resource: {resource_name}')
+            raise RuntimeError(f'Timeout waiting for resource "{resource_name}" to reach condition "{condition}"')
+        logger.error(f'Error waiting for resource: {e.stderr}')
+        raise RuntimeError(f'Failed to wait for resource: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error waiting for resource: {str(e)}')
+        raise RuntimeError(f'Error waiting for resource: {str(e)}')
+
+
 def main():
     """Main entry point for the Tilt MCP server"""
     # Import version from package

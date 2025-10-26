@@ -9,8 +9,12 @@ The Tilt MCP server allows Large Language Models (LLMs) and AI assistants to int
 - List all enabled Tilt resources
 - Fetch logs from specific resources
 - Monitor resource status and health
+- Enable and disable resources dynamically
+- Get detailed information about resources
+- Trigger resource rebuilds
+- Wait for resources to reach specific conditions
 
-This enables AI-powered development workflows, debugging assistance, and automated monitoring of your Tilt-managed services.
+This enables AI-powered development workflows, debugging assistance, automated monitoring, and intelligent resource management of your Tilt-managed services.
 
 ## Available MCP Tools
 
@@ -21,6 +25,10 @@ The Tilt MCP server exposes the following tools to MCP clients:
 | `get_all_resources` | Lists all enabled Tilt resources with their status | None |
 | `get_resource_logs` | Fetches logs from a specific resource | `resource_name` (required), `tail` (optional, default: 1000) |
 | `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required) |
+| `enable_resource` | Enables one or more Tilt resources | `resource_names` (required, list), `enable_only` (optional, default: false) |
+| `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list) |
+| `describe_resource` | Get detailed information about a specific resource | `resource_name` (required) |
+| `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30) |
 
 ### Tool Details
 
@@ -36,6 +44,9 @@ All tool executions are logged to `~/.tilt-mcp/tilt_mcp.log` for debugging.
 - 🔍 **Resource Discovery**: List all active Tilt resources with their current status
 - 📜 **Log Retrieval**: Fetch recent logs from any Tilt resource
 - 🔄 **Resource Triggering**: Manually trigger Tilt resources to rebuild/update
+- ✅ **Resource Control**: Enable or disable resources dynamically
+- 📋 **Detailed Information**: Get comprehensive details about any resource
+- ⏳ **Wait Conditions**: Wait for resources to reach specific states
 - 🛡️ **Type Safety**: Built with Python type hints for better IDE support
 - 🚀 **Async Support**: Fully asynchronous implementation using FastMCP
 - 📊 **Structured Output**: Returns well-formatted JSON responses
@@ -246,20 +257,145 @@ Example response:
 }
 ```
 
+### `enable_resource`
+
+Enables one or more Tilt resources. Can optionally enable specific resources while disabling all others.
+
+Parameters:
+- `resource_names` (list of strings, required): Names of the Tilt resources to enable
+- `enable_only` (boolean, optional): If true, enables these resources and disables all others (default: false)
+
+Example request:
+```json
+{
+  "resource_names": ["frontend", "backend"],
+  "enable_only": false
+}
+```
+
+Example response:
+```json
+{
+  "success": true,
+  "resources": ["frontend", "backend"],
+  "enable_only": false,
+  "message": "Resources ['frontend', 'backend'] have been enabled",
+  "output": ""
+}
+```
+
+### `disable_resource`
+
+Disables one or more Tilt resources. Useful for temporarily stopping resources without tearing down the entire Tilt environment.
+
+Parameters:
+- `resource_names` (list of strings, required): Names of the Tilt resources to disable
+
+Example request:
+```json
+{
+  "resource_names": ["frontend", "backend"]
+}
+```
+
+Example response:
+```json
+{
+  "success": true,
+  "resources": ["frontend", "backend"],
+  "message": "Resources ['frontend', 'backend'] have been disabled",
+  "output": ""
+}
+```
+
+### `describe_resource`
+
+Gets detailed information about a specific Tilt resource, including its configuration, status, build history, and runtime information.
+
+Parameters:
+- `resource_name` (string, required): Name of the Tilt resource to describe
+
+Example request:
+```json
+{
+  "resource_name": "frontend"
+}
+```
+
+Example response:
+```
+Name:         frontend
+Namespace:
+Labels:       type=k8s
+Annotations:  <none>
+API Version:  tilt.dev/v1alpha1
+Kind:         UIResource
+...
+(detailed resource information)
+```
+
+### `wait_for_resource`
+
+Waits for a Tilt resource to reach a specific condition. This is particularly useful for automation and ensuring resources are ready before proceeding with other operations.
+
+Parameters:
+- `resource_name` (string, required): Name of the Tilt resource to wait for
+- `condition` (string, optional): The condition to wait for (default: "Ready"). Common conditions include "Ready", "Updated"
+- `timeout_seconds` (integer, optional): Maximum time to wait in seconds (default: 30)
+
+Example request:
+```json
+{
+  "resource_name": "backend",
+  "condition": "Ready",
+  "timeout_seconds": 60
+}
+```
+
+Example response:
+```json
+{
+  "success": true,
+  "resource": "backend",
+  "condition": "Ready",
+  "message": "Resource \"backend\" reached condition \"Ready\"",
+  "output": "uiresource.tilt.dev/backend condition met"
+}
+```
+
 ## Example Prompts
 
 Here are some example prompts you can use with an AI assistant that has access to this MCP server:
 
+**Resource Discovery & Status:**
 - "Show me all the Tilt resources that are currently running"
-- "Get the last 100 lines of logs from the backend-api service"
 - "Which services are failing or have errors?"
-- "Show me the recent logs from all services that aren't healthy"
-- "Help me debug why the frontend service is crashing"
 - "Compare the status of frontend and backend services"
+- "Give me detailed information about the backend resource"
+
+**Log Analysis:**
+- "Get the last 100 lines of logs from the backend-api service"
+- "Show me the recent logs from all services that aren't healthy"
 - "Show me error logs from any failing services"
+- "Help me debug why the frontend service is crashing"
+
+**Resource Control:**
+- "Disable the frontend and backend services"
+- "Enable only the database service and disable everything else"
+- "Enable the frontend service"
+- "Disable all non-essential services to save resources"
+
+**Build & Deployment:**
 - "Trigger a rebuild of the backend service"
 - "Rebuild the frontend and show me the logs"
 - "Trigger all services that have errors"
+- "Wait for the backend to be ready before checking its logs"
+
+**Automation Workflows:**
+- "Enable the backend, wait for it to be ready, then check its logs"
+- "Disable all services, then enable only frontend and wait for it to start"
+- "Describe the database resource and show me its recent logs"
+- "Trigger a rebuild of the API service and wait until it's ready"
 
 ## Development
 
