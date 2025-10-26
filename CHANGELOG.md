@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All tool parameters now use `Annotated` types for better documentation
 - Updated documentation to reflect new MCP architecture
 - Tool configuration now targets Python 3.10 (black, mypy)
+- **IMPORTANT:** Changed import from `mcp.server.fastmcp` to `fastmcp` for FastMCP 2.0 compatibility
+- Changed functions from `async def` to `def` where no `await` is used (performance optimization)
 
 ### Improved
 - Better separation of concerns (read operations as resources, write operations as tools)

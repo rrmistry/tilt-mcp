@@ -1,11 +1,11 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Copy the host's .tilt-dev directory to the container's home directory
 if [ -d "/tmp/host-tilt-dev" ]; then
     echo "Copying tilt config from /tmp/host-tilt-dev to ~/.tilt-dev..." >&2
     mkdir -p ~/.tilt-dev
-    cp -r /tmp/host-tilt-dev/* ~/.tilt-dev/
+    cp -r /tmp/host-tilt-dev/* ~/.tilt-dev/ 2>/dev/null || true
 
     # Ensure proper permissions
     chmod -R u+w ~/.tilt-dev
@@ -21,7 +21,7 @@ if [ -d "/tmp/host-tilt-dev" ]; then
         sed -i '/- cluster:/a\    insecure-skip-tls-verify: true' ~/.tilt-dev/config
 
         echo "Modified config server line:" >&2
-        grep "server:" ~/.tilt-dev/config >&2
+        grep "server:" ~/.tilt-dev/config >&2 || true
     fi
 else
     echo "Warning: /tmp/host-tilt-dev not found, tilt may not work correctly" >&2

@@ -27,11 +27,12 @@ Resources provide read-only access to Tilt data. They're automatically discovere
 | Resource URI | Description |
 |--------------|-------------|
 | `tilt://resources/all` | List of all enabled Tilt resources with their current status |
-| `tilt://resources/{resource_name}/logs` | Logs from a specific resource (supports `?tail=N` query parameter) |
+| `tilt://resources/{resource_name}/logs{?tail}` | Logs from a specific resource (supports `?tail=N` query parameter, default: 1000) |
 | `tilt://resources/{resource_name}/describe` | Detailed information about a specific resource |
 
 **Example URIs:**
 - `tilt://resources/all` - Get all resources
+- `tilt://resources/frontend/logs` - Get last 1000 lines from frontend (default)
 - `tilt://resources/frontend/logs?tail=100` - Get last 100 lines from frontend
 - `tilt://resources/backend/describe` - Get detailed info about backend
 
@@ -101,7 +102,12 @@ You can install Tilt MCP in three ways:
 
 ### Option 1: Using Docker (Recommended for macOS/Windows)
 
-The Docker-based installation requires no Python setup and is automatically kept up-to-date with monthly builds.
+The Docker-based installation requires no Python setup and is automatically kept up-to-date with monthly builds. The image is optimized for size using Alpine Linux (~320MB vs 545MB+ for Debian-based images - 41% reduction).
+
+**Note:** The image size is primarily driven by FastMCP 2.0's dependencies (cryptography, pydantic, etc.). For reference:
+- Base Alpine + Python: ~50MB
+- Tilt binary: ~20MB
+- FastMCP 2.0 + dependencies: ~250MB
 
 See the [MCP Configuration](#configuration) section below for setup instructions.
 
@@ -222,6 +228,26 @@ To check the installed version of tilt-mcp:
 tilt-mcp --version
 ```
 
+### Building Docker Image Locally
+
+Build the optimized Alpine-based image:
+
+```bash
+docker build -t ghcr.io/rrmistry/tilt-mcp:latest .
+```
+
+Or build with a specific Tilt version:
+
+```bash
+docker build --build-arg TILT_VERSION=0.35.2 -t ghcr.io/rrmistry/tilt-mcp:latest .
+```
+
+To use Debian instead of Alpine (larger image but better compatibility):
+
+```bash
+docker build --build-arg BASE_IMAGE=python:3.11-slim-bookworm -t ghcr.io/rrmistry/tilt-mcp:latest .
+```
+
 ## Usage
 
 Once configured, the Tilt MCP server provides Resources, Tools, and Prompts through the Model Context Protocol.
@@ -256,6 +282,12 @@ Returns:
 ```
 
 **Get logs from a resource:**
+```
+tilt://resources/frontend/logs
+```
+Returns the last 1000 lines of logs as plain text (default).
+
+**Get custom number of log lines:**
 ```
 tilt://resources/frontend/logs?tail=50
 ```
@@ -367,10 +399,10 @@ Here are some example prompts you can use with an AI assistant that has access t
 - "Access the tilt://resources/all resource to see all services"
 
 **Log Analysis:**
-- "Get logs from the backend-api service (last 100 lines)"
+- "Get the last 100 lines of logs from the backend-api service"
 - "Read the logs from tilt://resources/frontend/logs?tail=50"
-- "Show me error logs from any failing services"
-- "Help me debug why the frontend service is crashing"
+- "Show me the last 200 lines of logs from any failing services"
+- "Help me debug why the frontend service is crashing by looking at recent logs"
 
 **Resource Control:**
 - "Disable the frontend and backend services"
@@ -393,8 +425,9 @@ Here are some example prompts you can use with an AI assistant that has access t
 
 **Using Resources Directly:**
 - "Read tilt://resources/backend/describe to understand the configuration"
-- "Compare logs from tilt://resources/frontend/logs and tilt://resources/backend/logs"
+- "Compare logs from tilt://resources/frontend/logs?tail=500 and tilt://resources/backend/logs?tail=500"
 - "Check tilt://resources/all to see which services need attention"
+- "Get the last 50 lines from the frontend: tilt://resources/frontend/logs?tail=50"
 
 ## Development
 
@@ -452,6 +485,10 @@ mypy src
     - There is a known issue with tilt https://github.com/tilt-dev/tilt/issues/6612 that prevents docker based tilt-mcp from connecting to the Tilt API server.
     - A workaround is to mount the `~/.tilt-dev` directory in the container.
     - Check if your local tilt instance is creating this directory and where it is located.
+
+5. **Alpine Linux compatibility**
+    - The Docker image uses Alpine Linux for size optimization
+    - Most Python packages work fine, but if you encounter issues with binary dependencies, you can build using the Debian base by changing the `BASE_IMAGE` build arg to `python:3.11-slim-bookworm`
 
 ### Debug Logging
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 
 # Configure logging
 log_dir = Path.home() / ".tilt-mcp"
@@ -95,7 +95,7 @@ def get_enabled_resources() -> list[dict]:
 # ===== Resources (read-only data) =====
 
 @mcp.resource("tilt://resources/all")
-async def all_resources() -> dict:
+def all_resources() -> dict:
     """List of all enabled Tilt resources with their current status."""
     logger.info('Fetching all enabled resources')
     resources = get_enabled_resources()
@@ -104,12 +104,14 @@ async def all_resources() -> dict:
 
 
 @mcp.resource("tilt://resources/{resource_name}/logs{?tail}")
-async def resource_logs(resource_name: str, tail: int = 1000) -> str:
+def resource_logs(resource_name: str, tail: int = 1000) -> str:
     """Logs from a specific Tilt resource.
 
     Args:
         resource_name: The name of the Tilt resource
         tail: Number of log lines to return (default: 1000)
+
+    Use ?tail=N to customize the number of lines, e.g., tilt://resources/frontend/logs?tail=100
     """
     logger.info(f'Getting logs for resource: {resource_name} with tail: {tail}')
 
@@ -127,7 +129,7 @@ async def resource_logs(resource_name: str, tail: int = 1000) -> str:
         if not logs:
             return f'No logs available for resource: {resource_name}'
 
-        # Return only the last 'tail' lines
+        # Return only the last 1000 lines
         log_lines = logs.splitlines()
         if len(log_lines) > tail:
             log_lines = log_lines[-tail:]
@@ -147,7 +149,7 @@ async def resource_logs(resource_name: str, tail: int = 1000) -> str:
 
 
 @mcp.resource("tilt://resources/{resource_name}/describe")
-async def resource_description(resource_name: str) -> str:
+def resource_description(resource_name: str) -> str:
     """Detailed information about a specific Tilt resource including configuration, status, and build history.
 
     Args:
@@ -183,7 +185,7 @@ async def resource_description(resource_name: str) -> str:
 
 
 @mcp.tool(description="Trigger a Tilt resource to rebuild/update. Use this to force a rebuild of a resource.")
-async def trigger_resource(
+def trigger_resource(
     resource_name: Annotated[str, "The name of the Tilt resource to trigger"]
 ) -> str:
     """Trigger a Tilt resource to rebuild/update.
@@ -223,7 +225,7 @@ async def trigger_resource(
 
 
 @mcp.tool(description="Enable one or more Tilt resources. Optionally disable all other resources.")
-async def enable_resource(
+def enable_resource(
     resource_names: Annotated[list[str], "List of resource names to enable"],
     enable_only: Annotated[bool, "If True, enable these resources and disable all others"] = False
 ) -> str:
@@ -269,7 +271,7 @@ async def enable_resource(
 
 
 @mcp.tool(description="Disable one or more Tilt resources. Useful for temporarily stopping services.")
-async def disable_resource(
+def disable_resource(
     resource_names: Annotated[list[str], "List of resource names to disable"]
 ) -> str:
     """Disable one or more Tilt resources.
@@ -311,7 +313,7 @@ async def disable_resource(
 
 
 @mcp.tool(description="Wait for a Tilt resource to reach a specific condition (e.g., Ready, Updated). Essential for automation workflows.")
-async def wait_for_resource(
+def wait_for_resource(
     resource_name: Annotated[str, "The name of the resource to wait for"],
     condition: Annotated[str, "The condition to wait for (e.g., 'Ready', 'Updated')"] = 'Ready',
     timeout_seconds: Annotated[int, "Maximum time to wait in seconds"] = 30
