@@ -16,44 +16,82 @@ The Tilt MCP server allows Large Language Models (LLMs) and AI assistants to int
 
 This enables AI-powered development workflows, debugging assistance, automated monitoring, and intelligent resource management of your Tilt-managed services.
 
-## Available MCP Tools
+## Available MCP Capabilities
 
-The Tilt MCP server exposes the following tools to MCP clients:
+The Tilt MCP server follows the Model Context Protocol specification and exposes three types of capabilities:
+
+### 🔍 Resources (Read-Only Data)
+
+Resources provide read-only access to Tilt data. They're automatically discovered by MCP clients and can be accessed via their URI.
+
+| Resource URI | Description |
+|--------------|-------------|
+| `tilt://resources/all` | List of all enabled Tilt resources with their current status |
+| `tilt://resources/{resource_name}/logs` | Logs from a specific resource (supports `?tail=N` query parameter) |
+| `tilt://resources/{resource_name}/describe` | Detailed information about a specific resource |
+
+**Example URIs:**
+- `tilt://resources/all` - Get all resources
+- `tilt://resources/frontend/logs?tail=100` - Get last 100 lines from frontend
+- `tilt://resources/backend/describe` - Get detailed info about backend
+
+### 🛠️ Tools (Actions with Side Effects)
+
+Tools enable LLMs to perform actions that modify the state of your Tilt environment.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `get_all_resources` | Lists all enabled Tilt resources with their status | None |
-| `get_resource_logs` | Fetches logs from a specific resource | `resource_name` (required), `tail` (optional, default: 1000) |
 | `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required) |
 | `enable_resource` | Enables one or more Tilt resources | `resource_names` (required, list), `enable_only` (optional, default: false) |
 | `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list) |
-| `describe_resource` | Get detailed information about a specific resource | `resource_name` (required) |
 | `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30) |
 
-### Tool Details
+### 💡 Prompts (Guided Workflows)
 
-All tools return structured JSON responses and include comprehensive error handling:
+Prompts are reusable templates that guide the LLM through common debugging and troubleshooting workflows.
+
+| Prompt | Description | Parameters |
+|--------|-------------|------------|
+| `debug_failing_resource` | Step-by-step debugging guide for a failing resource | `resource_name` (required) |
+| `analyze_resource_logs` | Analyze logs from a resource to identify errors | `resource_name` (required), `lines` (optional, default: 100) |
+| `troubleshoot_startup_failure` | Investigate why a resource won't start or keeps crashing | `resource_name` (required) |
+| `health_check_all_resources` | Comprehensive health check across all resources | None |
+| `optimize_resource_usage` | Optimize resource usage by selectively enabling/disabling services | `focus_resources` (required, list) |
+
+### Error Handling
+
+All capabilities include comprehensive error handling:
 - **Resource Not Found**: Raises `ValueError` with helpful message
 - **Tilt Connection Issues**: Raises `RuntimeError` with Tilt error details
 - **JSON Parsing Errors**: Provides detailed parsing error information
 
-All tool executions are logged to `~/.tilt-mcp/tilt_mcp.log` for debugging.
+All operations are logged to `~/.tilt-mcp/tilt_mcp.log` for debugging.
 
 ## Features
 
-- 🔍 **Resource Discovery**: List all active Tilt resources with their current status
-- 📜 **Log Retrieval**: Fetch recent logs from any Tilt resource
+**MCP Protocol Compliance:**
+- 🔍 **Resources**: Read-only access to Tilt data via URI templates (e.g., `tilt://resources/all`)
+- 🛠️ **Tools**: Actions with side effects for resource management and control
+- 💡 **Prompts**: Guided workflows for debugging and troubleshooting
+
+**Capabilities:**
+- 📊 **Resource Discovery**: List all active Tilt resources with their current status
+- 📜 **Log Retrieval**: Fetch recent logs from any Tilt resource with configurable tail
 - 🔄 **Resource Triggering**: Manually trigger Tilt resources to rebuild/update
 - ✅ **Resource Control**: Enable or disable resources dynamically
 - 📋 **Detailed Information**: Get comprehensive details about any resource
 - ⏳ **Wait Conditions**: Wait for resources to reach specific states
+- 🤖 **Guided Workflows**: Pre-built prompts for common debugging scenarios
+
+**Technical Features:**
 - 🛡️ **Type Safety**: Built with Python type hints for better IDE support
 - 🚀 **Async Support**: Fully asynchronous implementation using FastMCP
-- 📊 **Structured Output**: Returns well-formatted JSON responses
+- 📈 **MCP Best Practices**: Proper separation of resources, tools, and prompts
+- 🔧 **Comprehensive Logging**: All operations logged to `~/.tilt-mcp/tilt_mcp.log`
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher (required by FastMCP 2.0)
 - [Tilt](https://docs.tilt.dev/install.html) installed and configured
 - An MCP-compatible client (e.g., Claude Desktop, mcp-cli)
 
@@ -186,196 +224,151 @@ tilt-mcp --version
 
 ## Usage
 
-Once configured, the Tilt MCP server provides the following tools:
+Once configured, the Tilt MCP server provides Resources, Tools, and Prompts through the Model Context Protocol.
 
-### `get_all_resources`
+### Using Resources
 
-Lists all enabled Tilt resources with their current status.
+Resources are read-only and provide direct access to Tilt data. MCP clients can access them via their URI:
 
-Example response:
+**Get all resources:**
+```
+tilt://resources/all
+```
+Returns:
 ```json
-[
-  {
-    "name": "frontend",
-    "type": "k8s",
-    "status": "ok",
-    "updateStatus": "ok"
-  },
-  {
-    "name": "backend-api",
-    "type": "k8s", 
-    "status": "pending",
-    "updateStatus": "pending"
+{
+  "resources": [
+    {
+      "name": "frontend",
+      "type": "k8s",
+      "status": "ok",
+      "updateStatus": "ok"
+    },
+    {
+      "name": "backend-api",
+      "type": "k8s",
+      "status": "pending",
+      "updateStatus": "pending"
+    }
+  ],
+  "count": 2
+}
+```
+
+**Get logs from a resource:**
+```
+tilt://resources/frontend/logs?tail=50
+```
+Returns the last 50 lines of logs as plain text.
+
+**Get detailed resource information:**
+```
+tilt://resources/backend/describe
+```
+Returns detailed YAML/text output with configuration, status, and build history.
+
+### Using Tools
+
+Tools perform actions that modify the state of your Tilt environment.
+
+**Trigger a rebuild:**
+```json
+{
+  "name": "trigger_resource",
+  "arguments": {
+    "resource_name": "backend"
   }
-]
-```
-
-### `get_resource_logs`
-
-Fetches recent logs from a specific Tilt resource.
-
-Parameters:
-- `resource_name` (string, required): Name of the Tilt resource
-- `tail` (integer, optional): Number of log lines to return (default: 1000)
-
-Example request:
-```json
-{
-  "resource_name": "frontend",
-  "tail": 50
 }
 ```
 
-Example response:
+**Enable specific resources:**
 ```json
 {
-  "logs": "2024-01-15 10:23:45 INFO Starting server on port 3000\n2024-01-15 10:23:46 INFO Server ready"
+  "name": "enable_resource",
+  "arguments": {
+    "resource_names": ["frontend", "backend"],
+    "enable_only": false
+  }
 }
 ```
 
-### `trigger_resource`
-
-Triggers a Tilt resource to rebuild/update. This is useful for manually triggering resources that have `trigger_mode: manual` or for forcing a rebuild.
-
-Parameters:
-- `resource_name` (string, required): Name of the Tilt resource to trigger
-
-Example request:
+**Disable resources:**
 ```json
 {
-  "resource_name": "backend"
+  "name": "disable_resource",
+  "arguments": {
+    "resource_names": ["frontend", "backend"]
+  }
 }
 ```
 
-Example response:
+**Wait for a resource to be ready:**
 ```json
 {
-  "success": true,
-  "resource": "backend",
-  "message": "Resource \"backend\" has been triggered",
-  "output": ""
+  "name": "wait_for_resource",
+  "arguments": {
+    "resource_name": "backend",
+    "condition": "Ready",
+    "timeout_seconds": 60
+  }
 }
 ```
 
-### `enable_resource`
+### Using Prompts
 
-Enables one or more Tilt resources. Can optionally enable specific resources while disabling all others.
+Prompts provide guided workflows for common tasks. They generate contextual messages that guide the LLM through debugging and troubleshooting.
 
-Parameters:
-- `resource_names` (list of strings, required): Names of the Tilt resources to enable
-- `enable_only` (boolean, optional): If true, enables these resources and disables all others (default: false)
-
-Example request:
+**Debug a failing resource:**
 ```json
 {
-  "resource_names": ["frontend", "backend"],
-  "enable_only": false
+  "name": "debug_failing_resource",
+  "arguments": {
+    "resource_name": "backend"
+  }
 }
 ```
+This generates a comprehensive debugging workflow that guides the LLM to check logs, status, and suggest fixes.
 
-Example response:
+**Perform a health check:**
 ```json
 {
-  "success": true,
-  "resources": ["frontend", "backend"],
-  "enable_only": false,
-  "message": "Resources ['frontend', 'backend'] have been enabled",
-  "output": ""
+  "name": "health_check_all_resources",
+  "arguments": {}
 }
 ```
+This creates a systematic health check workflow across all resources.
 
-### `disable_resource`
-
-Disables one or more Tilt resources. Useful for temporarily stopping resources without tearing down the entire Tilt environment.
-
-Parameters:
-- `resource_names` (list of strings, required): Names of the Tilt resources to disable
-
-Example request:
+**Optimize resource usage:**
 ```json
 {
-  "resource_names": ["frontend", "backend"]
+  "name": "optimize_resource_usage",
+  "arguments": {
+    "focus_resources": ["backend", "database"]
+  }
 }
 ```
-
-Example response:
-```json
-{
-  "success": true,
-  "resources": ["frontend", "backend"],
-  "message": "Resources ['frontend', 'backend'] have been disabled",
-  "output": ""
-}
-```
-
-### `describe_resource`
-
-Gets detailed information about a specific Tilt resource, including its configuration, status, build history, and runtime information.
-
-Parameters:
-- `resource_name` (string, required): Name of the Tilt resource to describe
-
-Example request:
-```json
-{
-  "resource_name": "frontend"
-}
-```
-
-Example response:
-```
-Name:         frontend
-Namespace:
-Labels:       type=k8s
-Annotations:  <none>
-API Version:  tilt.dev/v1alpha1
-Kind:         UIResource
-...
-(detailed resource information)
-```
-
-### `wait_for_resource`
-
-Waits for a Tilt resource to reach a specific condition. This is particularly useful for automation and ensuring resources are ready before proceeding with other operations.
-
-Parameters:
-- `resource_name` (string, required): Name of the Tilt resource to wait for
-- `condition` (string, optional): The condition to wait for (default: "Ready"). Common conditions include "Ready", "Updated"
-- `timeout_seconds` (integer, optional): Maximum time to wait in seconds (default: 30)
-
-Example request:
-```json
-{
-  "resource_name": "backend",
-  "condition": "Ready",
-  "timeout_seconds": 60
-}
-```
-
-Example response:
-```json
-{
-  "success": true,
-  "resource": "backend",
-  "condition": "Ready",
-  "message": "Resource \"backend\" reached condition \"Ready\"",
-  "output": "uiresource.tilt.dev/backend condition met"
-}
-```
+This guides the LLM to enable only specified resources and disable others to conserve system resources.
 
 ## Example Prompts
 
 Here are some example prompts you can use with an AI assistant that has access to this MCP server:
 
+**Using Built-in Prompt Templates:**
+- "Use the debug_failing_resource prompt for the backend service"
+- "Run a health check on all my resources"
+- "Use the troubleshoot_startup_failure prompt to investigate why the frontend won't start"
+- "Analyze the logs from the backend service using the analyze_resource_logs prompt"
+- "Help me optimize my resources to focus on just the backend and database"
+
 **Resource Discovery & Status:**
 - "Show me all the Tilt resources that are currently running"
 - "Which services are failing or have errors?"
 - "Compare the status of frontend and backend services"
-- "Give me detailed information about the backend resource"
+- "Access the tilt://resources/all resource to see all services"
 
 **Log Analysis:**
-- "Get the last 100 lines of logs from the backend-api service"
-- "Show me the recent logs from all services that aren't healthy"
+- "Get logs from the backend-api service (last 100 lines)"
+- "Read the logs from tilt://resources/frontend/logs?tail=50"
 - "Show me error logs from any failing services"
 - "Help me debug why the frontend service is crashing"
 
@@ -391,11 +384,17 @@ Here are some example prompts you can use with an AI assistant that has access t
 - "Trigger all services that have errors"
 - "Wait for the backend to be ready before checking its logs"
 
-**Automation Workflows:**
+**Advanced Automation Workflows:**
 - "Enable the backend, wait for it to be ready, then check its logs"
 - "Disable all services, then enable only frontend and wait for it to start"
-- "Describe the database resource and show me its recent logs"
+- "Get detailed info about the database and show me its recent logs"
 - "Trigger a rebuild of the API service and wait until it's ready"
+- "Run a complete health check and fix any issues you find"
+
+**Using Resources Directly:**
+- "Read tilt://resources/backend/describe to understand the configuration"
+- "Compare logs from tilt://resources/frontend/logs and tilt://resources/backend/logs"
+- "Check tilt://resources/all to see which services need attention"
 
 ## Development
 

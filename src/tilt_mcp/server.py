@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -91,21 +92,24 @@ def get_enabled_resources() -> list[dict]:
         raise RuntimeError(f'Error fetching resources from Tilt: {e}')
 
 
-@mcp.tool()
-async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) -> str:
-    """
-    Get logs from a specific Tilt resource
-    
+# ===== Resources (read-only data) =====
+
+@mcp.resource("tilt://resources/all")
+async def all_resources() -> dict:
+    """List of all enabled Tilt resources with their current status."""
+    logger.info('Fetching all enabled resources')
+    resources = get_enabled_resources()
+    logger.info(f'Found {len(resources)} enabled resources')
+    return {"resources": resources, "count": len(resources)}
+
+
+@mcp.resource("tilt://resources/{resource_name}/logs{?tail}")
+async def resource_logs(resource_name: str, tail: int = 1000) -> str:
+    """Logs from a specific Tilt resource.
+
     Args:
-        resource_name: The name of the Tilt resource to get logs from
-        tail: The number of lines of logs to return (default: 1000)
-        
-    Returns:
-        str: JSON string containing the logs
-        
-    Raises:
-        ValueError: If the resource is not found
-        RuntimeError: If there's an error fetching logs
+        resource_name: The name of the Tilt resource
+        tail: Number of log lines to return (default: 1000)
     """
     logger.info(f'Getting logs for resource: {resource_name} with tail: {tail}')
 
@@ -121,7 +125,7 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
 
         logs = result.stdout
         if not logs:
-            return json.dumps({'logs': f'No logs available for resource: {resource_name}'})
+            return f'No logs available for resource: {resource_name}'
 
         # Return only the last 'tail' lines
         log_lines = logs.splitlines()
@@ -129,7 +133,7 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
             log_lines = log_lines[-tail:]
 
         logger.info(f'Successfully retrieved {len(log_lines)} log lines')
-        return json.dumps({'logs': '\n'.join(log_lines)})
+        return '\n'.join(log_lines)
 
     except subprocess.CalledProcessError as e:
         if 'No such resource' in e.stderr or 'not found' in e.stderr.lower():
@@ -142,41 +146,50 @@ async def get_resource_logs(ctx: Context, resource_name: str, tail: int = 1000) 
         raise RuntimeError(f'Error getting logs: {str(e)}')
 
 
-@mcp.tool()
-async def get_all_resources(ctx: Context) -> str:
-    """
-    Get all enabled Tilt resources
-
-    Returns:
-        str: JSON string containing a list of resource information:
-            - name: Resource name
-            - type: Resource type (e.g., 'k8s', 'local', etc.)
-            - status: Current runtime status
-            - updateStatus: Current update status
-
-    Raises:
-        RuntimeError: If there's an error fetching resources
-    """
-    logger.info('Fetching all enabled resources')
-    resources = get_enabled_resources()
-    logger.info(f'Found {len(resources)} enabled resources')
-    return json.dumps(resources, indent=2)
-
-
-@mcp.tool()
-async def trigger_resource(ctx: Context, resource_name: str) -> str:
-    """
-    Trigger a Tilt resource to rebuild/update
+@mcp.resource("tilt://resources/{resource_name}/describe")
+async def resource_description(resource_name: str) -> str:
+    """Detailed information about a specific Tilt resource including configuration, status, and build history.
 
     Args:
-        resource_name: The name of the Tilt resource to trigger
+        resource_name: The name of the resource to describe
+    """
+    logger.info(f'Describing resource: {resource_name}')
+
+    try:
+        cmd = ['tilt', 'describe', 'uiresource', resource_name]
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+
+        logger.info(f'Successfully described resource: {resource_name}')
+        return result.stdout
+
+    except subprocess.CalledProcessError as e:
+        if 'not found' in e.stderr.lower():
+            logger.error(f'Resource not found: {resource_name}')
+            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
+        logger.error(f'Error describing resource: {e.stderr}')
+        raise RuntimeError(f'Failed to describe resource: {e.stderr}')
+    except Exception as e:
+        logger.error(f'Unexpected error describing resource: {str(e)}')
+        raise RuntimeError(f'Error describing resource: {str(e)}')
+
+
+# ===== Tools (actions with side effects) =====
+
+
+@mcp.tool(description="Trigger a Tilt resource to rebuild/update. Use this to force a rebuild of a resource.")
+async def trigger_resource(
+    resource_name: Annotated[str, "The name of the Tilt resource to trigger"]
+) -> str:
+    """Trigger a Tilt resource to rebuild/update.
 
     Returns:
-        str: JSON string containing the trigger result with a success message
-
-    Raises:
-        ValueError: If the resource is not found
-        RuntimeError: If there's an error triggering the resource
+        JSON string containing the trigger result with a success message
     """
     logger.info(f'Triggering resource: {resource_name}')
 
@@ -209,21 +222,15 @@ async def trigger_resource(ctx: Context, resource_name: str) -> str:
         raise RuntimeError(f'Error triggering resource: {str(e)}')
 
 
-@mcp.tool()
-async def enable_resource(ctx: Context, resource_names: list[str], enable_only: bool = False) -> str:
-    """
-    Enable one or more Tilt resources
-
-    Args:
-        resource_names: List of resource names to enable
-        enable_only: If True, enable these resources and disable all others
+@mcp.tool(description="Enable one or more Tilt resources. Optionally disable all other resources.")
+async def enable_resource(
+    resource_names: Annotated[list[str], "List of resource names to enable"],
+    enable_only: Annotated[bool, "If True, enable these resources and disable all others"] = False
+) -> str:
+    """Enable one or more Tilt resources.
 
     Returns:
-        str: JSON string containing the result with a success message
-
-    Raises:
-        ValueError: If resource_names is empty
-        RuntimeError: If there's an error enabling resources
+        JSON string containing the result with a success message
     """
     if not resource_names:
         raise ValueError('At least one resource name must be provided')
@@ -261,20 +268,14 @@ async def enable_resource(ctx: Context, resource_names: list[str], enable_only: 
         raise RuntimeError(f'Error enabling resources: {str(e)}')
 
 
-@mcp.tool()
-async def disable_resource(ctx: Context, resource_names: list[str]) -> str:
-    """
-    Disable one or more Tilt resources
-
-    Args:
-        resource_names: List of resource names to disable
+@mcp.tool(description="Disable one or more Tilt resources. Useful for temporarily stopping services.")
+async def disable_resource(
+    resource_names: Annotated[list[str], "List of resource names to disable"]
+) -> str:
+    """Disable one or more Tilt resources.
 
     Returns:
-        str: JSON string containing the result with a success message
-
-    Raises:
-        ValueError: If resource_names is empty
-        RuntimeError: If there's an error disabling resources
+        JSON string containing the result with a success message
     """
     if not resource_names:
         raise ValueError('At least one resource name must be provided')
@@ -309,68 +310,16 @@ async def disable_resource(ctx: Context, resource_names: list[str]) -> str:
         raise RuntimeError(f'Error disabling resources: {str(e)}')
 
 
-@mcp.tool()
-async def describe_resource(ctx: Context, resource_name: str) -> str:
-    """
-    Get detailed information about a specific Tilt resource
-
-    Args:
-        resource_name: The name of the resource to describe
-
-    Returns:
-        str: Detailed information about the resource in text format
-
-    Raises:
-        ValueError: If the resource is not found
-        RuntimeError: If there's an error describing the resource
-    """
-    logger.info(f'Describing resource: {resource_name}')
-
-    try:
-        cmd = ['tilt', 'describe', 'uiresource', resource_name]
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
-
-        logger.info(f'Successfully described resource: {resource_name}')
-        return result.stdout
-
-    except subprocess.CalledProcessError as e:
-        if 'not found' in e.stderr.lower():
-            logger.error(f'Resource not found: {resource_name}')
-            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
-        logger.error(f'Error describing resource: {e.stderr}')
-        raise RuntimeError(f'Failed to describe resource: {e.stderr}')
-    except Exception as e:
-        logger.error(f'Unexpected error describing resource: {str(e)}')
-        raise RuntimeError(f'Error describing resource: {str(e)}')
-
-
-@mcp.tool()
+@mcp.tool(description="Wait for a Tilt resource to reach a specific condition (e.g., Ready, Updated). Essential for automation workflows.")
 async def wait_for_resource(
-    ctx: Context,
-    resource_name: str,
-    condition: str = 'Ready',
-    timeout_seconds: int = 30
+    resource_name: Annotated[str, "The name of the resource to wait for"],
+    condition: Annotated[str, "The condition to wait for (e.g., 'Ready', 'Updated')"] = 'Ready',
+    timeout_seconds: Annotated[int, "Maximum time to wait in seconds"] = 30
 ) -> str:
-    """
-    Wait for a Tilt resource to reach a specific condition
-
-    Args:
-        resource_name: The name of the resource to wait for
-        condition: The condition to wait for (default: 'Ready'). Can be 'Ready', 'Updated', etc.
-        timeout_seconds: Maximum time to wait in seconds (default: 30)
+    """Wait for a Tilt resource to reach a specific condition.
 
     Returns:
-        str: JSON string containing the result
-
-    Raises:
-        ValueError: If the resource is not found
-        RuntimeError: If there's an error or timeout waiting for the resource
+        JSON string containing the result
     """
     logger.info(f'Waiting for resource: {resource_name}, condition: {condition}, timeout: {timeout_seconds}s')
 
@@ -411,6 +360,116 @@ async def wait_for_resource(
     except Exception as e:
         logger.error(f'Unexpected error waiting for resource: {str(e)}')
         raise RuntimeError(f'Error waiting for resource: {str(e)}')
+
+
+# ===== Prompts (reusable message templates) =====
+
+
+@mcp.prompt(
+    description="Generate a comprehensive debugging guide for a failing Tilt resource"
+)
+def debug_failing_resource(resource_name: str) -> str:
+    """Creates a step-by-step debugging prompt for analyzing a failing Tilt resource.
+
+    Args:
+        resource_name: The name of the Tilt resource to debug
+    """
+    return f"""I need help debugging the Tilt resource "{resource_name}" which appears to be failing.
+
+Please help me investigate by:
+1. First, check the resource description to understand its configuration and current state
+2. Retrieve recent logs to identify any error messages or warnings
+3. Analyze the resource's runtime status and update status
+4. Suggest potential root causes based on the logs and status
+5. Recommend specific troubleshooting steps or fixes
+
+Let's start with getting the current state and recent logs for "{resource_name}"."""
+
+
+@mcp.prompt(
+    description="Generate a prompt for analyzing logs from a specific resource to identify errors"
+)
+def analyze_resource_logs(resource_name: str, lines: int = 100) -> str:
+    """Creates a prompt to analyze logs from a Tilt resource for errors and issues.
+
+    Args:
+        resource_name: The name of the Tilt resource
+        lines: Number of log lines to analyze (default: 100)
+    """
+    return f"""Please analyze the last {lines} lines of logs from the Tilt resource "{resource_name}" and help me:
+
+1. Identify any error messages, warnings, or unusual patterns
+2. Highlight any stack traces or exception details
+3. Determine if there are recurring issues or patterns
+4. Suggest what might be causing the problems
+5. Recommend next steps for resolution
+
+Please retrieve and analyze the logs for "{resource_name}"."""
+
+
+@mcp.prompt(
+    description="Generate a prompt for investigating why a resource won't start or keeps crashing"
+)
+def troubleshoot_startup_failure(resource_name: str) -> str:
+    """Creates a troubleshooting prompt for resources that fail to start.
+
+    Args:
+        resource_name: The name of the Tilt resource
+    """
+    return f"""The Tilt resource "{resource_name}" is failing to start or keeps crashing. Please help me troubleshoot by:
+
+1. Checking the resource's detailed description to understand its configuration
+2. Examining recent logs for startup errors or crash reports
+3. Looking for common startup issues such as:
+   - Missing dependencies or environment variables
+   - Port conflicts
+   - Configuration errors
+   - Resource constraints (memory, CPU)
+   - Network connectivity issues
+4. Comparing with the status of related or dependent resources
+5. Suggesting specific fixes based on the findings
+
+Let's investigate "{resource_name}" systematically."""
+
+
+@mcp.prompt(
+    description="Generate a prompt for performing a health check across all Tilt resources"
+)
+def health_check_all_resources() -> str:
+    """Creates a comprehensive health check prompt for all Tilt resources."""
+    return """Please perform a comprehensive health check of all Tilt resources:
+
+1. List all enabled resources and their current status
+2. Identify any resources that are not in a healthy state (failing, pending, or error states)
+3. For each unhealthy resource:
+   - Get the detailed description to understand its configuration
+   - Retrieve recent logs to identify issues
+   - Summarize the problem
+4. Provide a priority-ordered list of issues to address
+5. Suggest an action plan for getting all resources healthy
+
+Let's start with an overview of all resources."""
+
+
+@mcp.prompt(
+    description="Generate a prompt for optimizing resource usage by selectively enabling/disabling services"
+)
+def optimize_resource_usage(focus_resources: list[str]) -> str:
+    """Creates a prompt for optimizing Tilt resource usage.
+
+    Args:
+        focus_resources: List of resources that should remain enabled
+    """
+    resources_str = ', '.join(f'"{r}"' for r in focus_resources)
+    return f"""I want to optimize my development environment by focusing on specific resources. Please help me:
+
+1. Show the current status of all Tilt resources
+2. Enable only these resources: {resources_str}
+3. Disable all other resources to conserve system resources
+4. Wait for the enabled resources to become ready
+5. Verify that they're running correctly by checking their status and recent logs
+
+This will help me focus on {resources_str} while reducing system load."""
 
 
 def main():
