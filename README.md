@@ -4,13 +4,13 @@ A Model Context Protocol (MCP) server that integrates with [Tilt](https://tilt.d
 
 ## Why use a Tilt MCP server?
 
-Imagine being able to prompt your LLM:
+Imagine prompting like this:
 
-> Please work on <some LLM request> and then check tilt MCP for "backend-api" resource logs for compile status. Make sure that "backend-tests" resource is successful with your changes.
+> Please work on {some LLM request} and then check tilt MCP for "backend-api" resource logs for compile status. Make sure that "backend-tests" resource is successful with your changes.
 
 The key insight is you no longer need to tell your LLM _how_ to build and deploy your code. Instead, you can simply ask it to _what_ to build and deploy.
 
-Tilt is a powerful tool for working with Docker/Kubernetes workloads. With the Tilt MCP server, you can integrate Tilt's features directly into your workflow using Large Language Models (LLMs) like Claude Code / Codex / Gemini.
+Tilt is a powerful tool for working with Docker/Kubernetes workloads. With the Tilt MCP server, you can integrate Tilt's features directly into your workflow using Large Language Models (LLMs) like Claude Code / Codex / Gemini / VS Code Copilot / etc.
 
 This saves significant LLM tokens (and so ⏱️+💰), both by avoiding to give extra context to your LLM on how to build/deploy, and also by avoiding LLMs actually doing the build/deploy. All the LLM needs to know is to make code changes then call the tilt MCP server to get real-time feedback.
 
