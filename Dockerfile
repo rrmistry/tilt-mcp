@@ -24,8 +24,9 @@ FROM ${BASE_IMAGE} AS runtime
 
 ARG TILT_VERSION
 
-# Install Tilt binary directly (no curl/sudo needed in final image)
+# Install Tilt binary and socat for TCP forwarding
 RUN apk add --no-cache --virtual .download-deps wget tar && \
+    apk add --no-cache socat && \
     ARCH=$(uname -m) && \
     case ${ARCH} in \
         aarch64) TILT_ARCH=arm64 ;; \
@@ -65,25 +66,23 @@ RUN apk add --no-cache binutils && \
     # Remove binutils after stripping
     apk del binutils
 
-# Copy entrypoint script
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# Create log directory and .tilt-dev directory for read-only mount
+RUN mkdir -p /home/mcp-user/.tilt-mcp /home/mcp-user/.tilt-dev && \
+    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp /home/mcp-user/.tilt-dev
 
-# Create log directory
-RUN mkdir -p /home/mcp-user/.tilt-mcp && \
-    chown -R mcp-user:mcp-user /home/mcp-user/.tilt-mcp
-
-# This host variable combined with "--network=host" when calling docker run will allow the MCP server to connect to Tilt outside the container
+# Environment variables for dynamic port discovery and MCP server
+# TILT_HOST: The host where tilt server is running (default: host.docker.internal for Docker Desktop)
+# TILT_PORT: The web UI port for Tilt (default: 10350, or 10351, 10352, etc. for multiple instances)
+#            Python code will auto-discover the actual API port from ~/.tilt-dev/config
+# IS_DOCKER_MCP_SERVER: Flag to enable socat TCP forwarding (set to 'true' in Docker)
 ENV TILT_HOST=host.docker.internal \
     TILT_PORT=10350 \
     MCP_TRANSPORT=stdio \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    IS_DOCKER_MCP_SERVER=true
 
 # Switch to non-root user
 USER mcp-user
 
-# Use entrypoint script to copy and modify tilt config
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-
-# Default command to run the MCP server
-CMD ["tilt-mcp"]
+# Run tilt-mcp directly - it will handle socat launching internally based on IS_DOCKER_MCP_SERVER
+ENTRYPOINT ["tilt-mcp"]

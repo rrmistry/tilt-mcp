@@ -116,6 +116,13 @@ You can install Tilt MCP in three ways:
 
 The Docker-based installation requires no Python setup and is automatically kept up-to-date with monthly builds. The image is optimized for size using Alpine Linux (~320MB vs 545MB+ for Debian-based images - 41% reduction).
 
+**How it works:**
+- Automatically discovers the Tilt API port from `~/.tilt-dev/config` based on `TILT_PORT` (web UI port)
+- Uses `socat` to dynamically create a TCP tunnel from inside the container to the host Tilt server
+- Your host's `~/.tilt-dev` directory is mounted with write access (Tilt CLI needs lock files)
+- Supports multiple Tilt instances running on different ports (10350, 10351, etc.)
+- The Python code handles port discovery and socat management automatically
+
 **Note:** The image size is primarily driven by FastMCP 2.0's dependencies (cryptography, pydantic, etc.). For reference:
 - Base Alpine + Python: ~50MB
 - Tilt binary: ~20MB
@@ -151,7 +158,7 @@ Add the following to your Claude Desktop configuration file:
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 **Linux**: `~/.config/claude/claude_desktop_config.json`
 
-**For macOS/Linux:**
+**For macOS/Linux (single Tilt instance on default port 10350):**
 ```json
 {
   "mcpServers": {
@@ -163,9 +170,53 @@ Add the following to your Claude Desktop configuration file:
         "-i",
         "--rm",
         "-v",
-        "${HOME}/.tilt-dev:/tmp/host-tilt-dev:ro",
+        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
         "-v",
         "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "--network=host",
+        "ghcr.io/rrmistry/tilt-mcp:latest"
+      ],
+      "env": {}
+    }
+  }
+}
+```
+
+**For multiple Tilt instances (example with port 10351):**
+```json
+{
+  "mcpServers": {
+    "tilt-project1": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev:ro",
+        "-v",
+        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "-e",
+        "TILT_PORT=10350",
+        "--network=host",
+        "ghcr.io/rrmistry/tilt-mcp:latest"
+      ],
+      "env": {}
+    },
+    "tilt-project2": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev:ro",
+        "-v",
+        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
+        "-e",
+        "TILT_PORT=10351",
         "--network=host",
         "ghcr.io/rrmistry/tilt-mcp:latest"
       ],
@@ -187,7 +238,7 @@ Add the following to your Claude Desktop configuration file:
         "-i",
         "--rm",
         "-v",
-        "${env:USERPROFILE}\\.tilt-dev:/tmp/host-tilt-dev:ro",
+        "${env:USERPROFILE}\\.tilt-dev:/home/mcp-user/.tilt-dev",
         "-v",
         "${env:USERPROFILE}\\.tilt-mcp:/home/mcp-user/.tilt-mcp",
         "--network=host",
@@ -201,6 +252,14 @@ Add the following to your Claude Desktop configuration file:
 
 **For Windows (CMD):**
 Use `%USERPROFILE%` instead of `${env:USERPROFILE}` in the volume mount paths.
+
+**Key Configuration Notes:**
+- **TILT_PORT represents the web UI port** (10350, 10351, etc.) - NOT the API port
+- The Python code auto-discovers the actual API port from `~/.tilt-dev/config`
+- Context naming: port 10350 → "tilt-default", port 10351 → "tilt-10351", etc.
+- The `~/.tilt-dev` directory must be mounted with **write access** (Tilt CLI needs lock files)
+- `socat` dynamically forwards the discovered API port to `host.docker.internal`
+- `--network=host` is required for `host.docker.internal` to work on macOS/Windows
 
 ### Local Installation Configuration
 
@@ -494,9 +553,12 @@ mypy src
    - Check the logs at `~/.tilt-mcp/tilt_mcp.log`
 
 4. **Docker based tilt-mcp not able to connect**
-    - There is a known issue with tilt https://github.com/tilt-dev/tilt/issues/6612 that prevents docker based tilt-mcp from connecting to the Tilt API server.
-    - A workaround is to mount the `~/.tilt-dev` directory in the container.
-    - Check if your local tilt instance is creating this directory and where it is located.
+    - Ensure your `~/.tilt-dev` directory exists and is being created by your Tilt instance
+    - The directory must be mounted with write access: `~/.tilt-dev:/home/mcp-user/.tilt-dev` (Tilt CLI needs lock files)
+    - **TILT_PORT should be your web UI port** (10350, 10351, etc.), not the random API port
+    - Check the logs at `~/.tilt-mcp/tilt_mcp.log` to see the discovered API port
+    - The Python code auto-discovers the API port from the config and launches `socat` automatically
+    - Ensure `--network=host` is included in docker args (required for `host.docker.internal`)
 
 5. **Alpine Linux compatibility**
     - The Docker image uses Alpine Linux for size optimization
