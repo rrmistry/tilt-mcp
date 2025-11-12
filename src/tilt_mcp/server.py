@@ -5,11 +5,12 @@ import json
 import logging
 import os
 import subprocess
+import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Iterator
 from urllib.parse import urlparse
 
 import yaml
@@ -29,9 +30,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def parse_tilt_config() -> tuple[str, str]:
+def parse_tilt_config(tilt_port: str | None = None) -> tuple[str, str]:
     """
-    Parse Tilt config to discover the API server port for the specified TILT_PORT.
+    Parse Tilt config to discover the API server port for the specified web UI port.
+
+    Args:
+        tilt_port: The Tilt web UI port (e.g., '10350', '10351'). If None, uses TILT_PORT env var.
 
     Returns:
         tuple[str, str]: (context_name, api_port)
@@ -39,7 +43,8 @@ def parse_tilt_config() -> tuple[str, str]:
     Raises:
         RuntimeError: If config cannot be parsed or context not found
     """
-    tilt_port = os.getenv('TILT_PORT', '10350')
+    if tilt_port is None:
+        tilt_port = os.getenv('TILT_PORT', '10350')
     config_path = Path.home() / '.tilt-dev' / 'config'
 
     logger.info(f'Parsing Tilt config for port {tilt_port}')
@@ -137,136 +142,146 @@ def build_tilt_command(base_cmd: list[str], web_ui_port: str = '10350') -> list[
     return [base_cmd[0], '--host', 'localhost', '--port', web_ui_port] + base_cmd[1:]
 
 
-@dataclass
-class AppContext:
-    """Application context for the Tilt MCP server"""
-    context_name: str
-    web_ui_port: str  # User-specified port (TILT_PORT)
-    api_port: str  # Discovered API port from config
-    socat_web_ui: subprocess.Popen | None = None  # Socat for web UI port
-    socat_api: subprocess.Popen | None = None  # Socat for API port
+@contextmanager
+def setup_socat_forwarding(web_ui_port: str, api_port: str) -> Iterator[None]:
+    """
+    Context manager for dynamic socat TCP forwarding in Docker environments.
 
+    Sets up socat processes to forward container ports to the host, enabling
+    communication with Tilt servers running on the host machine.
 
-@asynccontextmanager
-async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Initialize app context and launch socat for TCP forwarding (Docker only)"""
-    logger.info("Starting Tilt MCP server")
+    Args:
+        web_ui_port: Tilt web UI port to forward (e.g., '10350')
+        api_port: Tilt API port to forward (e.g., '52899')
 
+    Yields:
+        None
+
+    Raises:
+        RuntimeError: If socat processes fail to start
+    """
     is_docker = os.getenv('IS_DOCKER_MCP_SERVER', '').lower() == 'true'
+
+    if not is_docker:
+        # No socat needed in local environment
+        logger.debug('Not in Docker environment - skipping socat setup')
+        yield
+        return
+
     socat_web_ui = None
     socat_api = None
-    context_name = 'tilt-default'
-    web_ui_port = '10350'
-    api_port = '10350'
 
     try:
-        # Only parse config and launch socat in Docker environment
-        if is_docker:
-            logger.info("Running in Docker environment - enabling socat forwarding")
+        tilt_host = os.getenv('TILT_HOST', 'host.docker.internal')
+        logger.info(f'Setting up socat forwarding for ports {web_ui_port} and {api_port} via {tilt_host}')
 
-            # Get web UI port and parse Tilt config to discover API port
-            web_ui_port = os.getenv('TILT_PORT', '10350')
-            context_name, api_port = parse_tilt_config()
-            logger.info(f'Using context: {context_name}, Web UI port: {web_ui_port}, API port: {api_port}')
+        # Launch socat #1: Forward web UI port
+        socat_web_ui_cmd = [
+            'socat',
+            f'TCP-LISTEN:{web_ui_port},bind=127.0.0.1,fork,reuseaddr',
+            f'TCP:{tilt_host}:{web_ui_port}'
+        ]
 
-            # Get host for socat forwarding
-            tilt_host = os.getenv('TILT_HOST', 'host.docker.internal')
-            logger.info(f'Forwarding to {tilt_host}')
-
-            import time
-
-            # Launch socat #1: Forward web UI port to host
-            socat_web_ui_cmd = [
-                'socat',
-                f'TCP-LISTEN:{web_ui_port},bind=127.0.0.1,fork,reuseaddr',
-                f'TCP:{tilt_host}:{web_ui_port}'
-            ]
-
-            logger.info(f'Launching socat for web UI port: {" ".join(socat_web_ui_cmd)}')
-            socat_web_ui = subprocess.Popen(
-                socat_web_ui_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-
-            time.sleep(0.3)
-
-            if socat_web_ui.poll() is not None:
-                _, stderr = socat_web_ui.communicate()
-                raise RuntimeError(f'Socat (web UI) failed to start: {stderr}')
-
-            logger.info(f'Socat (web UI) successfully started (PID: {socat_web_ui.pid})')
-
-            # Launch socat #2: Forward API port to host
-            socat_api_cmd = [
-                'socat',
-                f'TCP-LISTEN:{api_port},bind=127.0.0.1,fork,reuseaddr',
-                f'TCP:{tilt_host}:{api_port}'
-            ]
-
-            logger.info(f'Launching socat for API port: {" ".join(socat_api_cmd)}')
-            socat_api = subprocess.Popen(
-                socat_api_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-
-            time.sleep(0.3)
-
-            if socat_api.poll() is not None:
-                _, stderr = socat_api.communicate()
-                raise RuntimeError(f'Socat (API) failed to start: {stderr}')
-
-            logger.info(f'Socat (API) successfully started (PID: {socat_api.pid})')
-        else:
-            logger.info("Running as local Python package - no socat forwarding needed")
-            # For local execution, use environment variables or defaults
-            context_name = os.getenv('TILT_CONTEXT', 'tilt-default')
-            web_ui_port = os.getenv('TILT_PORT', '10350')
-            api_port = web_ui_port  # Same for local
-
-        # Create and yield context
-        ctx = AppContext(
-            context_name=context_name,
-            web_ui_port=web_ui_port,
-            api_port=api_port,
-            socat_web_ui=socat_web_ui,
-            socat_api=socat_api
+        logger.debug(f'Launching socat (web UI): {" ".join(socat_web_ui_cmd)}')
+        socat_web_ui = subprocess.Popen(
+            socat_web_ui_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
 
-        # Set global context for use by tilt CLI functions
-        global _app_context
-        _app_context = ctx
+        time.sleep(0.1)
 
-        yield ctx
+        if socat_web_ui.poll() is not None:
+            _, stderr = socat_web_ui.communicate()
+            raise RuntimeError(f'Socat (web UI port {web_ui_port}) failed to start: {stderr}')
+
+        logger.debug(f'Socat (web UI port {web_ui_port}) started (PID: {socat_web_ui.pid})')
+
+        # Launch socat #2: Forward API port
+        socat_api_cmd = [
+            'socat',
+            f'TCP-LISTEN:{api_port},bind=127.0.0.1,fork,reuseaddr',
+            f'TCP:{tilt_host}:{api_port}'
+        ]
+
+        logger.debug(f'Launching socat (API): {" ".join(socat_api_cmd)}')
+        socat_api = subprocess.Popen(
+            socat_api_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        time.sleep(0.1)
+
+        if socat_api.poll() is not None:
+            _, stderr = socat_api.communicate()
+            raise RuntimeError(f'Socat (API port {api_port}) failed to start: {stderr}')
+
+        logger.debug(f'Socat (API port {api_port}) started (PID: {socat_api.pid})')
+
+        yield
 
     finally:
-        # Cleanup: terminate both socat processes if they were started
-        logger.info("Shutting down Tilt MCP server")
-
+        # Cleanup: terminate both socat processes
         if socat_web_ui and socat_web_ui.poll() is None:
-            logger.info(f'Terminating socat (web UI) (PID: {socat_web_ui.pid})')
+            logger.debug(f'Terminating socat (web UI) (PID: {socat_web_ui.pid})')
             socat_web_ui.terminate()
             try:
-                socat_web_ui.wait(timeout=5)
-                logger.info('Socat (web UI) terminated gracefully')
+                socat_web_ui.wait(timeout=2)
+                logger.debug('Socat (web UI) terminated gracefully')
             except subprocess.TimeoutExpired:
-                logger.warning('Socat (web UI) did not terminate, killing process')
+                logger.debug('Socat (web UI) did not terminate, killing process')
                 socat_web_ui.kill()
                 socat_web_ui.wait()
 
         if socat_api and socat_api.poll() is None:
-            logger.info(f'Terminating socat (API) (PID: {socat_api.pid})')
+            logger.debug(f'Terminating socat (API) (PID: {socat_api.pid})')
             socat_api.terminate()
             try:
-                socat_api.wait(timeout=5)
-                logger.info('Socat (API) terminated gracefully')
+                socat_api.wait(timeout=2)
+                logger.debug('Socat (API) terminated gracefully')
             except subprocess.TimeoutExpired:
-                logger.warning('Socat (API) did not terminate, killing process')
+                logger.debug('Socat (API) did not terminate, killing process')
                 socat_api.kill()
                 socat_api.wait()
+
+
+@dataclass
+class AppContext:
+    """Minimal application context for the Tilt MCP server"""
+    is_docker: bool  # Whether running in Docker environment
+
+
+@asynccontextmanager
+async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+    """Initialize minimal app context for the Tilt MCP server.
+
+    Note: Socat forwarding is now managed per-call via setup_socat_forwarding()
+    context manager, allowing dynamic port configuration for monitoring multiple
+    Tilt instances.
+    """
+    logger.info("Starting Tilt MCP server")
+
+    is_docker = os.getenv('IS_DOCKER_MCP_SERVER', '').lower() == 'true'
+
+    if is_docker:
+        logger.info("Running in Docker environment - socat will be configured per-call")
+    else:
+        logger.info("Running as local Python package - no socat forwarding needed")
+
+    # Create minimal context
+    ctx = AppContext(is_docker=is_docker)
+
+    # Set global context for use by tilt CLI functions
+    global _app_context
+    _app_context = ctx
+
+    try:
+        yield ctx
+    finally:
+        logger.info("Shutting down Tilt MCP server")
 
 
 # Create FastMCP server
@@ -280,45 +295,53 @@ mcp = FastMCP(
 _app_context: AppContext | None = None
 
 
-def get_enabled_resources() -> list[dict]:
+def get_enabled_resources(tilt_port: str = '10350') -> list[dict]:
     """
     Fetch all enabled resources from Tilt
+
+    Args:
+        tilt_port: The Tilt web UI port to query (default: '10350')
 
     Returns:
         list[dict]: List of enabled Tilt resources
     """
     try:
-        # Build command with connection flags
-        cmd = build_tilt_command(
-            ['tilt', 'get', 'uiresource', '-o', 'json'],
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        data = json.loads(result.stdout)
-        resources = []
+        # Set up socat forwarding if in Docker, then fetch resources
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            # Build command with connection flags
+            cmd = build_tilt_command(
+                ['tilt', 'get', 'uiresource', '-o', 'json'],
+                web_ui_port=tilt_port
+            )
 
-        for item in data.get('items', []):
-            metadata = item.get('metadata', {})
-            status = item.get('status', {})
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            data = json.loads(result.stdout)
+            resources = []
 
-            # Skip disabled resources
-            if status.get('disableStatus', {}).get('state') == 'Disabled':
-                continue
+            for item in data.get('items', []):
+                metadata = item.get('metadata', {})
+                status = item.get('status', {})
 
-            resources.append({
-                'name': metadata.get('name'),
-                'type': metadata.get('labels', {}).get('type', 'unknown'),
-                'status': status.get('runtimeStatus', 'unknown'),
-                'updateStatus': status.get('updateStatus', 'unknown'),
-            })
+                # Skip disabled resources
+                if status.get('disableStatus', {}).get('state') == 'Disabled':
+                    continue
 
-        return resources
+                resources.append({
+                    'name': metadata.get('name'),
+                    'type': metadata.get('labels', {}).get('type', 'unknown'),
+                    'status': status.get('runtimeStatus', 'unknown'),
+                    'updateStatus': status.get('updateStatus', 'unknown'),
+                })
+
+            return resources
     except subprocess.CalledProcessError as e:
         logger.error(f'Failed to run tilt command: {e.stderr}')
         raise RuntimeError(f'Failed to fetch resources from Tilt: {e.stderr}')
@@ -332,51 +355,78 @@ def get_enabled_resources() -> list[dict]:
 
 # ===== Resources (read-only data) =====
 
+def _all_resources_impl(tilt_port: str = '10350') -> dict:
+    """Implementation for fetching all enabled Tilt resources."""
+    logger.info(f'Fetching all enabled resources from port {tilt_port}')
+    resources = get_enabled_resources(tilt_port)
+    logger.info(f'Found {len(resources)} enabled resources on port {tilt_port}')
+    return {"resources": resources, "count": len(resources), "tilt_port": tilt_port}
+
+
 @mcp.resource("tilt://resources/all")
-def all_resources() -> dict:
-    """List of all enabled Tilt resources with their current status."""
-    logger.info('Fetching all enabled resources')
-    resources = get_enabled_resources()
-    logger.info(f'Found {len(resources)} enabled resources')
-    return {"resources": resources, "count": len(resources)}
+def all_resources_default() -> dict:
+    """List of all enabled Tilt resources from default port (10350).
+
+    This is the static resource that appears in listMcpResources().
+    For other ports, use the template: tilt://resources/all?tilt_port=PORT
+    """
+    return _all_resources_impl('10350')
 
 
-@mcp.resource("tilt://resources/{resource_name}/logs{?tail}")
-def resource_logs(resource_name: str, tail: int = 1000) -> str:
+@mcp.resource("tilt://resources/all{?tilt_port}")
+def all_resources_template(tilt_port: str = '10350') -> dict:
+    """List of all enabled Tilt resources with their current status.
+
+    Args:
+        tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
+
+    Query different Tilt instances by specifying tilt_port parameter.
+    """
+    return _all_resources_impl(tilt_port)
+
+
+@mcp.resource("tilt://resources/{resource_name}/logs{?tail,tilt_port}")
+def resource_logs(resource_name: str, tail: int = 1000, tilt_port: str = '10350') -> str:
     """Logs from a specific Tilt resource.
 
     Args:
         resource_name: The name of the Tilt resource
         tail: Number of log lines to return (default: 1000)
+        tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
 
-    Use ?tail=N to customize the number of lines, e.g., tilt://resources/frontend/logs?tail=100
+    Query different Tilt instances by specifying tilt_port parameter.
     """
-    logger.info(f'Getting logs for resource: {resource_name} with tail: {tail}')
+    logger.info(f'Getting logs for resource: {resource_name} with tail: {tail} from port {tilt_port}')
 
     try:
-        cmd = build_tilt_command(
-            ['tilt', 'logs', resource_name],
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        logs = result.stdout
-        if not logs:
-            return f'No logs available for resource: {resource_name}'
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            cmd = build_tilt_command(
+                ['tilt', 'logs', resource_name],
+                web_ui_port=tilt_port
+            )
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
 
-        # Return only the last 1000 lines
-        log_lines = logs.splitlines()
-        if len(log_lines) > tail:
-            log_lines = log_lines[-tail:]
+            logs = result.stdout
+            if not logs:
+                return f'No logs available for resource: {resource_name}'
 
-        logger.info(f'Successfully retrieved {len(log_lines)} log lines')
-        return '\n'.join(log_lines)
+            # Return only the specified number of lines
+            log_lines = logs.splitlines()
+            if len(log_lines) > tail:
+                log_lines = log_lines[-tail:]
+
+            logger.info(f'Successfully retrieved {len(log_lines)} log lines')
+            return '\n'.join(log_lines)
 
     except subprocess.CalledProcessError as e:
         if 'No such resource' in e.stderr or 'not found' in e.stderr.lower():
@@ -389,30 +439,38 @@ def resource_logs(resource_name: str, tail: int = 1000) -> str:
         raise RuntimeError(f'Error getting logs: {str(e)}')
 
 
-@mcp.resource("tilt://resources/{resource_name}/describe")
-def resource_description(resource_name: str) -> str:
+@mcp.resource("tilt://resources/{resource_name}/describe{?tilt_port}")
+def resource_description(resource_name: str, tilt_port: str = '10350') -> str:
     """Detailed information about a specific Tilt resource including configuration, status, and build history.
 
     Args:
         resource_name: The name of the resource to describe
+        tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
+
+    Query different Tilt instances by specifying tilt_port parameter.
     """
-    logger.info(f'Describing resource: {resource_name}')
+    logger.info(f'Describing resource: {resource_name} from port {tilt_port}')
 
     try:
-        cmd = build_tilt_command(
-            ['tilt', 'describe', 'uiresource', resource_name],
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        logger.info(f'Successfully described resource: {resource_name}')
-        return result.stdout
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            cmd = build_tilt_command(
+                ['tilt', 'describe', 'uiresource', resource_name],
+                web_ui_port=tilt_port
+            )
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            logger.info(f'Successfully described resource: {resource_name}')
+            return result.stdout
 
     except subprocess.CalledProcessError as e:
         if 'not found' in e.stderr.lower():
@@ -428,37 +486,44 @@ def resource_description(resource_name: str) -> str:
 # ===== Tools (actions with side effects) =====
 
 
-@mcp.tool(description="Trigger a Tilt resource to rebuild/update. Use this to force a rebuild of a resource.")
+@mcp.tool(description="Trigger a Tilt resource to rebuild/update on a specific Tilt instance.")
 def trigger_resource(
-    resource_name: Annotated[str, "The name of the Tilt resource to trigger"]
+    resource_name: Annotated[str, "The name of the Tilt resource to trigger"],
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Trigger a Tilt resource to rebuild/update.
 
     Returns:
         JSON string containing the trigger result with a success message
     """
-    logger.info(f'Triggering resource: {resource_name}')
+    logger.info(f'Triggering resource: {resource_name} on port {tilt_port}')
 
     try:
-        cmd = build_tilt_command(
-            ['tilt', 'trigger', resource_name],
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        logger.info(f'Successfully triggered resource: {resource_name}')
-        return json.dumps({
-            'success': True,
-            'resource': resource_name,
-            'message': f'Resource "{resource_name}" has been triggered',
-            'output': result.stdout.strip() if result.stdout else ''
-        })
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            cmd = build_tilt_command(
+                ['tilt', 'trigger', resource_name],
+                web_ui_port=tilt_port
+            )
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            logger.info(f'Successfully triggered resource: {resource_name}')
+            return json.dumps({
+                'success': True,
+                'resource': resource_name,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" has been triggered on port {tilt_port}',
+                'output': result.stdout.strip() if result.stdout else ''
+            })
 
     except subprocess.CalledProcessError as e:
         if 'No such resource' in e.stderr or 'not found' in e.stderr.lower():
@@ -471,10 +536,11 @@ def trigger_resource(
         raise RuntimeError(f'Error triggering resource: {str(e)}')
 
 
-@mcp.tool(description="Enable one or more Tilt resources. Optionally disable all other resources.")
+@mcp.tool(description="Enable one or more Tilt resources on a specific instance. Optionally disable all others.")
 def enable_resource(
     resource_names: Annotated[list[str], "List of resource names to enable"],
-    enable_only: Annotated[bool, "If True, enable these resources and disable all others"] = False
+    enable_only: Annotated[bool, "If True, enable these resources and disable all others"] = False,
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Enable one or more Tilt resources.
 
@@ -484,35 +550,41 @@ def enable_resource(
     if not resource_names:
         raise ValueError('At least one resource name must be provided')
 
-    logger.info(f'Enabling resources: {resource_names}, only={enable_only}')
+    logger.info(f'Enabling resources: {resource_names}, only={enable_only} on port {tilt_port}')
 
     try:
-        base_cmd = ['tilt', 'enable']
-        if enable_only:
-            base_cmd.append('--only')
-        base_cmd.extend(resource_names)
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        cmd = build_tilt_command(
-            base_cmd,
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            base_cmd = ['tilt', 'enable']
+            if enable_only:
+                base_cmd.append('--only')
+            base_cmd.extend(resource_names)
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+            cmd = build_tilt_command(
+                base_cmd,
+                web_ui_port=tilt_port
+            )
 
-        logger.info(f'Successfully enabled resources: {resource_names}')
-        return json.dumps({
-            'success': True,
-            'resources': resource_names,
-            'enable_only': enable_only,
-            'message': f'Resources {resource_names} have been enabled' + (' (all others disabled)' if enable_only else ''),
-            'output': result.stdout.strip() if result.stdout else ''
-        })
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            logger.info(f'Successfully enabled resources: {resource_names}')
+            return json.dumps({
+                'success': True,
+                'resources': resource_names,
+                'enable_only': enable_only,
+                'tilt_port': tilt_port,
+                'message': f'Resources {resource_names} have been enabled on port {tilt_port}' + (' (all others disabled)' if enable_only else ''),
+                'output': result.stdout.strip() if result.stdout else ''
+            })
 
     except subprocess.CalledProcessError as e:
         logger.error(f'Error enabling resources: {e.stderr}')
@@ -522,9 +594,10 @@ def enable_resource(
         raise RuntimeError(f'Error enabling resources: {str(e)}')
 
 
-@mcp.tool(description="Disable one or more Tilt resources. Useful for temporarily stopping services.")
+@mcp.tool(description="Disable one or more Tilt resources on a specific instance.")
 def disable_resource(
-    resource_names: Annotated[list[str], "List of resource names to disable"]
+    resource_names: Annotated[list[str], "List of resource names to disable"],
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Disable one or more Tilt resources.
 
@@ -534,32 +607,38 @@ def disable_resource(
     if not resource_names:
         raise ValueError('At least one resource name must be provided')
 
-    logger.info(f'Disabling resources: {resource_names}')
+    logger.info(f'Disabling resources: {resource_names} on port {tilt_port}')
 
     try:
-        base_cmd = ['tilt', 'disable']
-        base_cmd.extend(resource_names)
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        cmd = build_tilt_command(
-            base_cmd,
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            base_cmd = ['tilt', 'disable']
+            base_cmd.extend(resource_names)
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+            cmd = build_tilt_command(
+                base_cmd,
+                web_ui_port=tilt_port
+            )
 
-        logger.info(f'Successfully disabled resources: {resource_names}')
-        return json.dumps({
-            'success': True,
-            'resources': resource_names,
-            'message': f'Resources {resource_names} have been disabled',
-            'output': result.stdout.strip() if result.stdout else ''
-        })
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            logger.info(f'Successfully disabled resources: {resource_names}')
+            return json.dumps({
+                'success': True,
+                'resources': resource_names,
+                'tilt_port': tilt_port,
+                'message': f'Resources {resource_names} have been disabled on port {tilt_port}',
+                'output': result.stdout.strip() if result.stdout else ''
+            })
 
     except subprocess.CalledProcessError as e:
         logger.error(f'Error disabling resources: {e.stderr}')
@@ -569,48 +648,55 @@ def disable_resource(
         raise RuntimeError(f'Error disabling resources: {str(e)}')
 
 
-@mcp.tool(description="Wait for a Tilt resource to reach a specific condition (e.g., Ready, Updated). Essential for automation workflows.")
+@mcp.tool(description="Wait for a Tilt resource to reach a condition on a specific instance.")
 def wait_for_resource(
     resource_name: Annotated[str, "The name of the resource to wait for"],
     condition: Annotated[str, "The condition to wait for (e.g., 'Ready', 'Updated')"] = 'Ready',
-    timeout_seconds: Annotated[int, "Maximum time to wait in seconds"] = 30
+    timeout_seconds: Annotated[int, "Maximum time to wait in seconds"] = 30,
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Wait for a Tilt resource to reach a specific condition.
 
     Returns:
         JSON string containing the result
     """
-    logger.info(f'Waiting for resource: {resource_name}, condition: {condition}, timeout: {timeout_seconds}s')
+    logger.info(f'Waiting for resource: {resource_name}, condition: {condition}, timeout: {timeout_seconds}s on port {tilt_port}')
 
     try:
-        base_cmd = [
-            'tilt', 'wait',
-            f'uiresource/{resource_name}',
-            f'--for=condition={condition}',
-            f'--timeout={timeout_seconds}s'
-        ]
+        # Discover API port from config
+        _, api_port = parse_tilt_config(tilt_port)
 
-        cmd = build_tilt_command(
-            base_cmd,
-            web_ui_port=_app_context.web_ui_port if _app_context else '10350'
-        )
+        # Set up socat forwarding if in Docker
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            base_cmd = [
+                'tilt', 'wait',
+                f'uiresource/{resource_name}',
+                f'--for=condition={condition}',
+                f'--timeout={timeout_seconds}s'
+            ]
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True
-        )
+            cmd = build_tilt_command(
+                base_cmd,
+                web_ui_port=tilt_port
+            )
 
-        logger.info(f'Resource {resource_name} reached condition {condition}')
-        return json.dumps({
-            'success': True,
-            'resource': resource_name,
-            'condition': condition,
-            'message': f'Resource "{resource_name}" reached condition "{condition}"',
-            'output': result.stdout.strip() if result.stdout else ''
-        })
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+
+            logger.info(f'Resource {resource_name} reached condition {condition}')
+            return json.dumps({
+                'success': True,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" reached condition "{condition}" on port {tilt_port}',
+                'output': result.stdout.strip() if result.stdout else ''
+            })
 
     except subprocess.CalledProcessError as e:
         if 'not found' in e.stderr.lower():
