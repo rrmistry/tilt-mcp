@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
@@ -17,17 +18,41 @@ import yaml
 from fastmcp import FastMCP
 
 # Configure logging
-log_dir = Path.home() / ".tilt-mcp"
-log_dir.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / "tilt_mcp.log", mode='a')
+# IMPORTANT: Use stderr for console logging, NOT stdout
+# MCP servers use stdout for transport, so logging to stdout breaks the protocol
+def _setup_logging() -> logging.Logger:
+    """Configure logging handlers based on environment."""
+    log_handlers: list[logging.Handler] = [
+        logging.StreamHandler(sys.stderr)  # Always log to stderr (works for both local and Docker)
     ]
-)
-logger = logging.getLogger(__name__)
+
+    is_docker = os.getenv('IS_DOCKER_MCP_SERVER', '').lower() == 'true'
+
+    # In Docker, file logging is optional (logs are typically accessed via `docker logs`)
+    # For local runs, always enable file logging for persistence
+    # Can be overridden with TILT_MCP_LOG_FILE env var
+    log_file_path = os.getenv('TILT_MCP_LOG_FILE')
+
+    if log_file_path:
+        # Explicit log file path provided
+        log_path = Path(log_file_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handlers.append(logging.FileHandler(log_path, mode='a'))
+    elif not is_docker:
+        # Local environment: use default log file
+        log_dir = Path.home() / ".tilt-mcp"
+        log_dir.mkdir(exist_ok=True)
+        log_handlers.append(logging.FileHandler(log_dir / "tilt_mcp.log", mode='a'))
+    # In Docker without explicit log file: only stderr (captured by `docker logs`)
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=log_handlers
+    )
+    return logging.getLogger(__name__)
+
+logger = _setup_logging()
 
 
 def parse_tilt_config(tilt_port: str | None = None) -> tuple[str, str]:
