@@ -72,11 +72,10 @@ RUN mkdir -p /home/mcp-user/.tilt-mcp /home/mcp-user/.tilt-dev && \
 
 # Environment variables for dynamic port discovery and MCP server
 # TILT_HOST: The host where tilt server is running (default: host.docker.internal for Docker Desktop)
-# TILT_PORT: The web UI port for Tilt (default: 10350, or 10351, 10352, etc. for multiple instances)
-#            Python code will auto-discover the actual API port from ~/.tilt-dev/config
 # IS_DOCKER_MCP_SERVER: Flag to enable socat TCP forwarding (set to 'true' in Docker)
+# Note: tilt_port is now passed as a parameter to each MCP tool/resource call, allowing
+#       a single MCP server to query multiple Tilt instances on different ports
 ENV TILT_HOST=host.docker.internal \
-    TILT_PORT=10350 \
     MCP_TRANSPORT=stdio \
     PYTHONUNBUFFERED=1 \
     IS_DOCKER_MCP_SERVER=true

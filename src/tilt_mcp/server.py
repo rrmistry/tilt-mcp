@@ -55,12 +55,12 @@ def _setup_logging() -> logging.Logger:
 logger = _setup_logging()
 
 
-def parse_tilt_config(tilt_port: str | None = None) -> tuple[str, str]:
+def parse_tilt_config(tilt_port: str = '10350') -> tuple[str, str]:
     """
     Parse Tilt config to discover the API server port for the specified web UI port.
 
     Args:
-        tilt_port: The Tilt web UI port (e.g., '10350', '10351'). If None, uses TILT_PORT env var.
+        tilt_port: The Tilt web UI port (e.g., '10350', '10351'). Defaults to '10350'.
 
     Returns:
         tuple[str, str]: (context_name, api_port)
@@ -68,8 +68,6 @@ def parse_tilt_config(tilt_port: str | None = None) -> tuple[str, str]:
     Raises:
         RuntimeError: If config cannot be parsed or context not found
     """
-    if tilt_port is None:
-        tilt_port = os.getenv('TILT_PORT', '10350')
     config_path = Path.home() / '.tilt-dev' / 'config'
 
     logger.info(f'Parsing Tilt config for port {tilt_port}')
@@ -157,7 +155,7 @@ def build_tilt_command(base_cmd: list[str], web_ui_port: str = '10350') -> list[
 
     Args:
         base_cmd: Base command like ['tilt', 'get', 'uiresource']
-        web_ui_port: The web UI port (TILT_PORT env var, e.g., 10350, 10351)
+        web_ui_port: The Tilt web UI port (e.g., 10350, 10351)
 
     Returns:
         list[str]: Complete command with connection flags

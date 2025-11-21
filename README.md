@@ -38,14 +38,17 @@ Resources provide read-only access to Tilt data. They're automatically discovere
 
 | Resource URI | Description |
 |--------------|-------------|
-| `tilt://resources/all` | List of all enabled Tilt resources with their current status |
-| `tilt://resources/{resource_name}/logs{?tail}` | Logs from a specific resource (supports `?tail=N` query parameter, default: 1000) |
-| `tilt://resources/{resource_name}/describe` | Detailed information about a specific resource |
+| `tilt://resources/all{?tilt_port}` | List of all enabled Tilt resources with their current status |
+| `tilt://resources/{resource_name}/logs{?tail,tilt_port}` | Logs from a specific resource (supports `?tail=N` query parameter, default: 1000) |
+| `tilt://resources/{resource_name}/describe{?tilt_port}` | Detailed information about a specific resource |
+
+All resources support an optional `tilt_port` parameter (default: 10350) to query different Tilt instances.
 
 **Example URIs:**
-- `tilt://resources/all` - Get all resources
+- `tilt://resources/all` - Get all resources from default port (10350)
+- `tilt://resources/all?tilt_port=10351` - Get all resources from port 10351
 - `tilt://resources/frontend/logs` - Get last 1000 lines from frontend (default)
-- `tilt://resources/frontend/logs?tail=100` - Get last 100 lines from frontend
+- `tilt://resources/frontend/logs?tail=100&tilt_port=10351` - Get last 100 lines from frontend on port 10351
 - `tilt://resources/backend/describe` - Get detailed info about backend
 
 ### 🛠️ Tools (Actions with Side Effects)
@@ -54,10 +57,12 @@ Tools enable LLMs to perform actions that modify the state of your Tilt environm
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required) |
-| `enable_resource` | Enables one or more Tilt resources | `resource_names` (required, list), `enable_only` (optional, default: false) |
-| `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list) |
-| `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30) |
+| `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required), `tilt_port` (optional, default: '10350') |
+| `enable_resource` | Enables one or more Tilt resources | `resource_names` (required, list), `enable_only` (optional, default: false), `tilt_port` (optional, default: '10350') |
+| `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list), `tilt_port` (optional, default: '10350') |
+| `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30), `tilt_port` (optional, default: '10350') |
+
+All tools support an optional `tilt_port` parameter to target different Tilt instances running on different ports.
 
 ### 💡 Prompts (Guided Workflows)
 
@@ -117,10 +122,10 @@ You can install Tilt MCP in three ways:
 The Docker-based installation requires no Python setup and is automatically kept up-to-date with monthly builds. The image is optimized for size using Alpine Linux (~320MB vs 545MB+ for Debian-based images - 41% reduction).
 
 **How it works:**
-- Automatically discovers the Tilt API port from `~/.tilt-dev/config` based on `TILT_PORT` (web UI port)
+- Automatically discovers the Tilt API port from `~/.tilt-dev/config` based on the `tilt_port` parameter
 - Uses `socat` to dynamically create a TCP tunnel from inside the container to the host Tilt server
 - Your host's `~/.tilt-dev` directory is mounted with write access (Tilt CLI needs lock files)
-- Supports multiple Tilt instances running on different ports (10350, 10351, etc.)
+- A single MCP server can query multiple Tilt instances by specifying different `tilt_port` values (10350, 10351, etc.)
 - The Python code handles port discovery and socat management automatically
 
 **Note:** The image size is primarily driven by FastMCP 2.0's dependencies (cryptography, pydantic, etc.). For reference:
@@ -182,49 +187,20 @@ Add the following to your Claude Desktop configuration file:
 }
 ```
 
-**For multiple Tilt instances (example with port 10351):**
-```json
-{
-  "mcpServers": {
-    "tilt-project1": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-v",
-        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
-        "-v",
-        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
-        "-e",
-        "TILT_PORT=10350",
-        "--network=host",
-        "ghcr.io/rrmistry/tilt-mcp:latest"
-      ],
-      "env": {}
-    },
-    "tilt-project2": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "-v",
-        "${HOME}/.tilt-dev:/home/mcp-user/.tilt-dev",
-        "-v",
-        "${HOME}/.tilt-mcp:/home/mcp-user/.tilt-mcp",
-        "-e",
-        "TILT_PORT=10351",
-        "--network=host",
-        "ghcr.io/rrmistry/tilt-mcp:latest"
-      ],
-      "env": {}
-    }
-  }
-}
+**For multiple Tilt instances:**
+
+A single MCP server can query multiple Tilt instances. Simply specify the `tilt_port` parameter when calling tools or resources:
+
+```python
+# Query resources from different Tilt instances
+trigger_resource(resource_name="backend", tilt_port="10350")  # First instance
+trigger_resource(resource_name="backend", tilt_port="10351")  # Second instance
+
+# Get logs from specific instance
+# URI: tilt://resources/backend/logs?tilt_port=10351
 ```
+
+No additional configuration needed - use the same single-instance Docker config above.
 
 **For Windows (PowerShell):**
 ```json
@@ -254,7 +230,7 @@ Add the following to your Claude Desktop configuration file:
 Use `%USERPROFILE%` instead of `${env:USERPROFILE}` in the volume mount paths.
 
 **Key Configuration Notes:**
-- **TILT_PORT represents the web UI port** (10350, 10351, etc.) - NOT the API port
+- The `tilt_port` parameter represents the web UI port (10350, 10351, etc.) - NOT the API port
 - The Python code auto-discovers the actual API port from `~/.tilt-dev/config`
 - Context naming: port 10350 → "tilt-default", port 10351 → "tilt-10351", etc.
 - The `~/.tilt-dev` directory must be mounted with **write access** (Tilt CLI needs lock files)
@@ -555,7 +531,7 @@ mypy src
 4. **Docker based tilt-mcp not able to connect**
     - Ensure your `~/.tilt-dev` directory exists and is being created by your Tilt instance
     - The directory must be mounted with write access: `~/.tilt-dev:/home/mcp-user/.tilt-dev` (Tilt CLI needs lock files)
-    - **TILT_PORT should be your web UI port** (10350, 10351, etc.), not the random API port
+    - The `tilt_port` parameter should be your web UI port (10350, 10351, etc.), not the random API port
     - Check the logs at `~/.tilt-mcp/tilt_mcp.log` to see the discovered API port
     - The Python code auto-discovers the API port from the config and launches `socat` automatically
     - Ensure `--network=host` is included in docker args (required for `host.docker.internal`)
