@@ -671,6 +671,74 @@ def disable_resource(
         raise RuntimeError(f'Error disabling resources: {str(e)}')
 
 
+def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> dict | None:
+    """
+    Get the current status of a specific Tilt resource.
+
+    Args:
+        resource_name: The name of the resource to query
+        tilt_port: The Tilt web UI port
+        api_port: The Tilt API port (for socat forwarding)
+
+    Returns:
+        dict with resource status info, or None if not found
+
+    Status values from Tilt:
+        updateStatus: "ok", "error", "pending", "in_progress", "none", "not_applicable"
+        runtimeStatus: "ok", "error", "pending", "not_applicable"
+        conditions[].type: "Ready", "UpToDate"
+        conditions[].status: "True", "False"
+        conditions[].reason: "UpdateError", "Unknown", etc. (when status is False)
+    """
+    try:
+        with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
+            cmd = build_tilt_command(
+                ['tilt', 'get', 'uiresource', resource_name, '-o', 'json'],
+                web_ui_port=tilt_port
+            )
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            data = json.loads(result.stdout)
+
+            status = data.get('status', {})
+            conditions = status.get('conditions', [])
+
+            # Build a dict of condition name -> {status: bool, reason: str}
+            condition_map = {}
+            for cond in conditions:
+                cond_type = cond.get('type', '')
+                cond_status = cond.get('status', '') == 'True'
+                cond_reason = cond.get('reason', '')
+                condition_map[cond_type] = {
+                    'status': cond_status,
+                    'reason': cond_reason
+                }
+
+            # Extract build error if present
+            build_history = status.get('buildHistory', [])
+            last_build_error = None
+            if build_history:
+                last_build_error = build_history[0].get('error')
+
+            return {
+                'name': data.get('metadata', {}).get('name'),
+                'runtimeStatus': status.get('runtimeStatus', 'unknown'),
+                'updateStatus': status.get('updateStatus', 'unknown'),
+                'conditions': condition_map,
+                'lastBuildError': last_build_error
+            }
+
+    except subprocess.CalledProcessError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
 @mcp.tool(description="Wait for a Tilt resource to reach a condition on a specific instance.")
 def wait_for_resource(
     resource_name: Annotated[str, "The name of the resource to wait for"],
@@ -679,6 +747,12 @@ def wait_for_resource(
     tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Wait for a Tilt resource to reach a specific condition.
+
+    This function first checks if the resource is already in the target condition
+    or in a terminal failure state before waiting. This handles cases where:
+    - The resource has already completed (returns immediately with success)
+    - The resource has already failed (returns immediately with failure details)
+    - The resource is still running (waits for the condition)
 
     Returns:
         JSON string containing the result
@@ -689,7 +763,86 @@ def wait_for_resource(
         # Discover API port from config
         _, api_port = parse_tilt_config(tilt_port)
 
-        # Set up socat forwarding if in Docker
+        # Pre-check: Get current resource status to handle terminal states
+        current_status = _get_resource_status(resource_name, tilt_port, api_port)
+
+        if current_status is None:
+            raise ValueError(f'Resource "{resource_name}" not found in Tilt')
+
+        runtime_status = current_status['runtimeStatus']
+        update_status = current_status['updateStatus']
+        conditions = current_status['conditions']
+        last_build_error = current_status.get('lastBuildError')
+
+        logger.info(f'Current status for {resource_name}: runtimeStatus={runtime_status}, '
+                    f'updateStatus={update_status}, conditions={conditions}')
+
+        # Check if already in the target condition
+        target_condition = conditions.get(condition, {})
+        if target_condition.get('status', False):
+            logger.info(f'Resource {resource_name} already has condition {condition}=True')
+            return json.dumps({
+                'success': True,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" already has condition "{condition}" on port {tilt_port}',
+                'already_met': True,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status
+                }
+            })
+
+        # Check for terminal failure states that won't recover
+        # From Tilt: updateStatus can be "error" when build fails, runtimeStatus can be "error" for runtime failures
+        # The condition will have reason="UpdateError" when the update failed
+
+        # Check if the condition explicitly failed (not just "not yet ready")
+        condition_reason = target_condition.get('reason', '')
+        is_error_condition = condition_reason in ('UpdateError', 'RuntimeError', 'Error')
+
+        # updateStatus="error" means the build/update failed terminally
+        is_update_error = update_status == 'error'
+
+        # runtimeStatus="error" means the runtime (e.g., container) failed
+        is_runtime_error = runtime_status == 'error'
+
+        if is_update_error or is_error_condition:
+            error_detail = last_build_error or f'updateStatus={update_status}'
+            logger.warning(f'Resource {resource_name} has failed: {error_detail}')
+            return json.dumps({
+                'success': False,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" has failed and will not reach condition "{condition}" without intervention',
+                'terminal_state': True,
+                'error': last_build_error,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status,
+                    'conditionReason': condition_reason
+                }
+            })
+
+        if is_runtime_error:
+            logger.warning(f'Resource {resource_name} has runtime error: runtimeStatus={runtime_status}')
+            return json.dumps({
+                'success': False,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" has a runtime error and will not reach condition "{condition}" without intervention',
+                'terminal_state': True,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status,
+                    'conditionReason': condition_reason
+                }
+            })
+
+        # Resource is not in target condition and not in terminal failure - proceed with wait
         with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
             base_cmd = [
                 'tilt', 'wait',
@@ -727,9 +880,29 @@ def wait_for_resource(
             raise ValueError(f'Resource "{resource_name}" not found in Tilt')
         elif 'timed out' in e.stderr.lower() or 'timeout' in e.stderr.lower():
             logger.error(f'Timeout waiting for resource: {resource_name}')
+            # On timeout, fetch current status to provide better context
+            try:
+                final_status = _get_resource_status(resource_name, tilt_port, api_port)
+                if final_status:
+                    return json.dumps({
+                        'success': False,
+                        'resource': resource_name,
+                        'condition': condition,
+                        'tilt_port': tilt_port,
+                        'message': f'Timeout waiting for resource "{resource_name}" to reach condition "{condition}"',
+                        'timeout': True,
+                        'current_status': {
+                            'runtimeStatus': final_status['runtimeStatus'],
+                            'updateStatus': final_status['updateStatus']
+                        }
+                    })
+            except Exception:
+                pass  # Fall through to raising the error
             raise RuntimeError(f'Timeout waiting for resource "{resource_name}" to reach condition "{condition}"')
         logger.error(f'Error waiting for resource: {e.stderr}')
         raise RuntimeError(f'Failed to wait for resource: {e.stderr}')
+    except ValueError:
+        raise  # Re-raise ValueError as-is
     except Exception as e:
         logger.error(f'Unexpected error waiting for resource: {str(e)}')
         raise RuntimeError(f'Error waiting for resource: {str(e)}')
