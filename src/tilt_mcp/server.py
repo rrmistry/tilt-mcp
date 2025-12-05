@@ -165,6 +165,28 @@ def build_tilt_command(base_cmd: list[str], web_ui_port: str = '10350') -> list[
     return [base_cmd[0], '--host', 'localhost', '--port', web_ui_port] + base_cmd[1:]
 
 
+def _is_port_accessible(host: str, port: str) -> bool:
+    """
+    Check if a TCP port is accessible (i.e., something is listening on it).
+
+    Args:
+        host: The host to check (e.g., '127.0.0.1')
+        port: The port to check (e.g., '10350')
+
+    Returns:
+        True if the port is accessible, False otherwise
+    """
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex((host, int(port)))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+
 @contextmanager
 def setup_socat_forwarding(web_ui_port: str, api_port: str) -> Iterator[None]:
     """
@@ -172,6 +194,14 @@ def setup_socat_forwarding(web_ui_port: str, api_port: str) -> Iterator[None]:
 
     Sets up socat processes to forward container ports to the host, enabling
     communication with Tilt servers running on the host machine.
+
+    Environment variables:
+        IS_DOCKER_MCP_SERVER: Set to 'true' to indicate Docker environment
+        TILT_MCP_USE_SOCAT: Force socat behavior:
+            - 'true' or '1': Always use socat (even if port is accessible)
+            - 'false' or '0': Never use socat (even in Docker)
+            - 'auto' or unset: Auto-detect based on port accessibility (default)
+        TILT_HOST: Host to forward to (default: 'host.docker.internal')
 
     Args:
         web_ui_port: Tilt web UI port to forward (e.g., '10350')
@@ -184,10 +214,35 @@ def setup_socat_forwarding(web_ui_port: str, api_port: str) -> Iterator[None]:
         RuntimeError: If socat processes fail to start
     """
     is_docker = os.getenv('IS_DOCKER_MCP_SERVER', '').lower() == 'true'
+    socat_mode = os.getenv('TILT_MCP_USE_SOCAT', 'auto').lower()
 
-    if not is_docker:
-        # No socat needed in local environment
+    # Determine if we should use socat
+    use_socat = False
+
+    if socat_mode in ('true', '1'):
+        # Force socat on
+        use_socat = True
+        logger.debug('Socat forced ON via TILT_MCP_USE_SOCAT=true')
+    elif socat_mode in ('false', '0'):
+        # Force socat off
+        use_socat = False
+        logger.debug('Socat forced OFF via TILT_MCP_USE_SOCAT=false')
+    elif not is_docker:
+        # Not in Docker, no socat needed
+        use_socat = False
         logger.debug('Not in Docker environment - skipping socat setup')
+    else:
+        # Auto-detect: check if the port is already accessible
+        # If Tilt is directly accessible (e.g., Linux with host network or Docker on Linux),
+        # we don't need socat. If not accessible, we need socat to bridge to host.docker.internal
+        if _is_port_accessible('127.0.0.1', web_ui_port):
+            use_socat = False
+            logger.debug(f'Port {web_ui_port} is already accessible on localhost - skipping socat')
+        else:
+            use_socat = True
+            logger.debug(f'Port {web_ui_port} not accessible on localhost - will use socat')
+
+    if not use_socat:
         yield
         return
 
@@ -289,8 +344,14 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 
     is_docker = os.getenv('IS_DOCKER_MCP_SERVER', '').lower() == 'true'
 
-    if is_docker:
-        logger.info("Running in Docker environment - socat will be configured per-call")
+    socat_mode = os.getenv('TILT_MCP_USE_SOCAT', 'auto').lower()
+
+    if socat_mode in ('true', '1'):
+        logger.info("Running with TILT_MCP_USE_SOCAT=true - socat will always be used")
+    elif socat_mode in ('false', '0'):
+        logger.info("Running with TILT_MCP_USE_SOCAT=false - socat disabled")
+    elif is_docker:
+        logger.info("Running in Docker environment - socat will be auto-configured per-call based on port accessibility")
     else:
         logger.info("Running as local Python package - no socat forwarding needed")
 

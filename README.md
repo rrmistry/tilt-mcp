@@ -237,6 +237,20 @@ Use `%USERPROFILE%` instead of `${env:USERPROFILE}` in the volume mount paths.
 - `socat` dynamically forwards the discovered API port to `host.docker.internal`
 - `--network=host` is required for `host.docker.internal` to work on macOS/Windows
 
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IS_DOCKER_MCP_SERVER` | `false` | Set to `true` when running in Docker (set automatically in the Docker image) |
+| `TILT_MCP_USE_SOCAT` | `auto` | Control socat TCP forwarding behavior (see below) |
+| `TILT_HOST` | `host.docker.internal` | Host to forward to when using socat |
+| `TILT_MCP_LOG_FILE` | (none) | Override log file path (default: `~/.tilt-mcp/tilt_mcp.log`) |
+
+**TILT_MCP_USE_SOCAT modes:**
+- `auto` (default): Auto-detect based on port accessibility. Skips socat if Tilt is already reachable on localhost (e.g., Docker on Linux with `--network=host`).
+- `true` or `1`: Always use socat forwarding, even if the port is already accessible.
+- `false` or `0`: Never use socat, even in Docker environments.
+
 ### Local Installation Configuration
 
 If you installed via PyPI or from source, use this simpler configuration:
@@ -535,6 +549,10 @@ mypy src
     - Check the logs at `~/.tilt-mcp/tilt_mcp.log` to see the discovered API port
     - The Python code auto-discovers the API port from the config and launches `socat` automatically
     - Ensure `--network=host` is included in docker args (required for `host.docker.internal`)
+    - If socat is causing issues, you can control it via the `TILT_MCP_USE_SOCAT` environment variable:
+      - `auto` (default): Auto-detects if socat is needed by checking port accessibility
+      - `true`: Force socat on
+      - `false`: Force socat off
 
 5. **Alpine Linux compatibility**
     - The Docker image uses Alpine Linux for size optimization
