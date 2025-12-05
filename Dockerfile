@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=docker.io/library/python:3.11-alpine
+ARG BASE_IMAGE=docker.io/library/python:3.11-alpine3.22
 ARG TILT_VERSION=0.35.2
 
 # Build stage
