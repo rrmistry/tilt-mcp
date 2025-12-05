@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -469,20 +470,37 @@ def all_resources_template(tilt_port: str = '10350') -> dict:
     return _all_resources_impl(tilt_port)
 
 
-@mcp.resource("tilt://resources/{resource_name}/logs{?tail,tilt_port}")
-def resource_logs(resource_name: str, tail: int = 1000, tilt_port: str = '10350') -> str:
-    """Logs from a specific Tilt resource.
+@mcp.resource("tilt://resources/{resource_name}/logs{?tail,filter,tilt_port}")
+def resource_logs(resource_name: str, tail: int = 1000, filter: str = '', tilt_port: str = '10350') -> str:
+    """Logs from a specific Tilt resource with optional regex filtering.
 
     Args:
         resource_name: The name of the Tilt resource
-        tail: Number of log lines to return (default: 1000)
+        tail: Number of log lines to return after filtering (default: 1000)
+        filter: Optional regex pattern to filter log lines (case-insensitive by default).
+                Only lines matching this pattern will be returned. Useful for filtering
+                by X-Request-ID, error messages, or specific keywords. Examples:
+                - 'X-Request-Id: abc123' - filter by request ID
+                - 'error|warn' - show only errors and warnings
+                - '\\[2024-01-15' - filter by date prefix
+                - '(?-i)ERROR' - case-sensitive match (use (?-i) to disable case-insensitivity)
         tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
 
     Query different Tilt instances by specifying tilt_port parameter.
     """
-    logger.info(f'Getting logs for resource: {resource_name} with tail: {tail} from port {tilt_port}')
+    logger.info(f'Getting logs for resource: {resource_name} with tail: {tail}, filter: "{filter}" from port {tilt_port}')
 
     try:
+        # Validate regex pattern if provided
+        # Default to case-insensitive matching for user convenience
+        # Users can override with (?-i) in their pattern if case-sensitive matching is needed
+        filter_pattern = None
+        if filter:
+            try:
+                filter_pattern = re.compile(filter, re.IGNORECASE)
+            except re.error as e:
+                raise ValueError(f'Invalid regex pattern "{filter}": {e}')
+
         # Discover API port from config
         _, api_port = parse_tilt_config(tilt_port)
 
@@ -504,8 +522,18 @@ def resource_logs(resource_name: str, tail: int = 1000, tilt_port: str = '10350'
             if not logs:
                 return f'No logs available for resource: {resource_name}'
 
-            # Return only the specified number of lines
             log_lines = logs.splitlines()
+
+            # Apply regex filter if provided
+            if filter_pattern:
+                original_count = len(log_lines)
+                log_lines = [line for line in log_lines if filter_pattern.search(line)]
+                logger.info(f'Filter matched {len(log_lines)} of {original_count} log lines')
+
+                if not log_lines:
+                    return f'No logs matching filter "{filter}" for resource: {resource_name}'
+
+            # Return only the specified number of lines (after filtering)
             if len(log_lines) > tail:
                 log_lines = log_lines[-tail:]
 
@@ -518,6 +546,8 @@ def resource_logs(resource_name: str, tail: int = 1000, tilt_port: str = '10350'
             raise ValueError(f'Resource "{resource_name}" not found in Tilt')
         logger.error(f'Error getting logs: {e.stderr}')
         raise RuntimeError(f'Failed to get logs: {e.stderr}')
+    except ValueError:
+        raise  # Re-raise ValueError as-is (includes invalid regex)
     except Exception as e:
         logger.error(f'Unexpected error getting logs: {str(e)}')
         raise RuntimeError(f'Error getting logs: {str(e)}')

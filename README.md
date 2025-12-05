@@ -39,7 +39,7 @@ Resources provide read-only access to Tilt data. They're automatically discovere
 | Resource URI | Description |
 |--------------|-------------|
 | `tilt://resources/all{?tilt_port}` | List of all enabled Tilt resources with their current status |
-| `tilt://resources/{resource_name}/logs{?tail,tilt_port}` | Logs from a specific resource (supports `?tail=N` query parameter, default: 1000) |
+| `tilt://resources/{resource_name}/logs{?tail,filter,tilt_port}` | Logs from a specific resource with optional regex filtering (case-insensitive by default) |
 | `tilt://resources/{resource_name}/describe{?tilt_port}` | Detailed information about a specific resource |
 
 All resources support an optional `tilt_port` parameter (default: 10350) to query different Tilt instances.
@@ -49,6 +49,8 @@ All resources support an optional `tilt_port` parameter (default: 10350) to quer
 - `tilt://resources/all?tilt_port=10351` - Get all resources from port 10351
 - `tilt://resources/frontend/logs` - Get last 1000 lines from frontend (default)
 - `tilt://resources/frontend/logs?tail=100&tilt_port=10351` - Get last 100 lines from frontend on port 10351
+- `tilt://resources/backend/logs?filter=error` - Filter logs for errors (case-insensitive)
+- `tilt://resources/backend/logs?filter=X-Request-Id:%20abc123` - Filter by request ID
 - `tilt://resources/backend/describe` - Get detailed info about backend
 
 ### 🛠️ Tools (Actions with Side Effects)
