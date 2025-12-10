@@ -64,6 +64,16 @@ Tools enable LLMs to perform actions that modify the state of your Tilt environm
 | `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list), `tilt_port` (optional, default: '10350') |
 | `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30), `tilt_port` (optional, default: '10350') |
 
+**Read-Only Tools** (for clients that don't support MCP Resources):
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_resources` | List all enabled Tilt resources with their status | `tilt_port` (optional, default: '10350') |
+| `get_resource_logs` | Get logs from a specific resource with optional regex filtering | `resource_name` (required), `tail` (optional, default: 1000), `filter` (optional, regex pattern), `tilt_port` (optional, default: '10350') |
+| `describe_resource` | Get detailed information about a specific resource | `resource_name` (required), `tilt_port` (optional, default: '10350') |
+
+> **Note:** The read-only tools (`list_resources`, `get_resource_logs`, `describe_resource`) provide the same functionality as the MCP Resources above, but are exposed as tools for better compatibility with LLM clients (like Claude Code) that may not fully support MCP resource discovery.
+
 All tools support an optional `tilt_port` parameter to target different Tilt instances running on different ports.
 
 ### 💡 Prompts (Guided Workflows)

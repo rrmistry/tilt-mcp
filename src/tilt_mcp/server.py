@@ -470,23 +470,17 @@ def all_resources_template(tilt_port: str = '10350') -> dict:
     return _all_resources_impl(tilt_port)
 
 
-@mcp.resource("tilt://resources/{resource_name}/logs{?tail,filter,tilt_port}")
-def resource_logs(resource_name: str, tail: int = 1000, filter: str = '', tilt_port: str = '10350') -> str:
-    """Logs from a specific Tilt resource with optional regex filtering.
+def _get_resource_logs_impl(resource_name: str, tail: int = 1000, filter: str = '', tilt_port: str = '10350') -> str:
+    """Implementation for fetching logs from a specific Tilt resource.
 
     Args:
         resource_name: The name of the Tilt resource
         tail: Number of log lines to return after filtering (default: 1000)
-        filter: Optional regex pattern to filter log lines (case-insensitive by default).
-                Only lines matching this pattern will be returned. Useful for filtering
-                by X-Request-ID, error messages, or specific keywords. Examples:
-                - 'X-Request-Id: abc123' - filter by request ID
-                - 'error|warn' - show only errors and warnings
-                - '\\[2024-01-15' - filter by date prefix
-                - '(?-i)ERROR' - case-sensitive match (use (?-i) to disable case-insensitivity)
-        tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
+        filter: Optional regex pattern to filter log lines (case-insensitive by default)
+        tilt_port: The Tilt web UI port (default: 10350)
 
-    Query different Tilt instances by specifying tilt_port parameter.
+    Returns:
+        Log output as a string
     """
     logger.info(f'Getting logs for resource: {resource_name} with tail: {tail}, filter: "{filter}" from port {tilt_port}')
 
@@ -553,15 +547,36 @@ def resource_logs(resource_name: str, tail: int = 1000, filter: str = '', tilt_p
         raise RuntimeError(f'Error getting logs: {str(e)}')
 
 
-@mcp.resource("tilt://resources/{resource_name}/describe{?tilt_port}")
-def resource_description(resource_name: str, tilt_port: str = '10350') -> str:
-    """Detailed information about a specific Tilt resource including configuration, status, and build history.
+@mcp.resource("tilt://resources/{resource_name}/logs{?tail,filter,tilt_port}")
+def resource_logs(resource_name: str, tail: int = 1000, filter: str = '', tilt_port: str = '10350') -> str:
+    """Logs from a specific Tilt resource with optional regex filtering.
 
     Args:
-        resource_name: The name of the resource to describe
+        resource_name: The name of the Tilt resource
+        tail: Number of log lines to return after filtering (default: 1000)
+        filter: Optional regex pattern to filter log lines (case-insensitive by default).
+                Only lines matching this pattern will be returned. Useful for filtering
+                by X-Request-ID, error messages, or specific keywords. Examples:
+                - 'X-Request-Id: abc123' - filter by request ID
+                - 'error|warn' - show only errors and warnings
+                - '\\[2024-01-15' - filter by date prefix
+                - '(?-i)ERROR' - case-sensitive match (use (?-i) to disable case-insensitivity)
         tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
 
     Query different Tilt instances by specifying tilt_port parameter.
+    """
+    return _get_resource_logs_impl(resource_name, tail, filter, tilt_port)
+
+
+def _describe_resource_impl(resource_name: str, tilt_port: str = '10350') -> str:
+    """Implementation for describing a specific Tilt resource.
+
+    Args:
+        resource_name: The name of the resource to describe
+        tilt_port: The Tilt web UI port (default: 10350)
+
+    Returns:
+        Resource description as a string
     """
     logger.info(f'Describing resource: {resource_name} from port {tilt_port}')
 
@@ -595,6 +610,19 @@ def resource_description(resource_name: str, tilt_port: str = '10350') -> str:
     except Exception as e:
         logger.error(f'Unexpected error describing resource: {str(e)}')
         raise RuntimeError(f'Error describing resource: {str(e)}')
+
+
+@mcp.resource("tilt://resources/{resource_name}/describe{?tilt_port}")
+def resource_description(resource_name: str, tilt_port: str = '10350') -> str:
+    """Detailed information about a specific Tilt resource including configuration, status, and build history.
+
+    Args:
+        resource_name: The name of the resource to describe
+        tilt_port: The Tilt web UI port (default: 10350 for backward compatibility)
+
+    Query different Tilt instances by specifying tilt_port parameter.
+    """
+    return _describe_resource_impl(resource_name, tilt_port)
 
 
 # ===== Tools (actions with side effects) =====
@@ -760,6 +788,65 @@ def disable_resource(
     except Exception as e:
         logger.error(f'Unexpected error disabling resources: {str(e)}')
         raise RuntimeError(f'Error disabling resources: {str(e)}')
+
+
+@mcp.tool(description="List all enabled Tilt resources with their current status.")
+def list_resources(
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
+) -> str:
+    """List all enabled Tilt resources.
+
+    This tool provides the same functionality as the tilt://resources/all resource,
+    but exposed as a tool for better compatibility with LLM clients that don't
+    support MCP resources.
+
+    Returns:
+        JSON string containing the list of resources with their status
+    """
+    logger.info(f'Listing all enabled resources from port {tilt_port}')
+    resources = get_enabled_resources(tilt_port)
+    logger.info(f'Found {len(resources)} enabled resources on port {tilt_port}')
+    return json.dumps({
+        'resources': resources,
+        'count': len(resources),
+        'tilt_port': tilt_port
+    })
+
+
+@mcp.tool(description="Get logs from a specific Tilt resource with optional regex filtering.")
+def get_resource_logs(
+    resource_name: Annotated[str, "The name of the Tilt resource"],
+    tail: Annotated[int, "Number of log lines to return after filtering (default: 1000)"] = 1000,
+    filter: Annotated[str, "Optional regex pattern to filter log lines (case-insensitive). Examples: 'error|warn', 'X-Request-Id: abc123'"] = '',
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
+) -> str:
+    """Get logs from a specific Tilt resource with optional regex filtering.
+
+    This tool provides the same functionality as the tilt://resources/{name}/logs resource,
+    but exposed as a tool for better compatibility with LLM clients that don't
+    support MCP resources.
+
+    Returns:
+        The log output as a string
+    """
+    return _get_resource_logs_impl(resource_name, tail, filter, tilt_port)
+
+
+@mcp.tool(description="Get detailed information about a specific Tilt resource including configuration, status, and build history.")
+def describe_resource(
+    resource_name: Annotated[str, "The name of the resource to describe"],
+    tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
+) -> str:
+    """Get detailed information about a specific Tilt resource.
+
+    This tool provides the same functionality as the tilt://resources/{name}/describe resource,
+    but exposed as a tool for better compatibility with LLM clients that don't
+    support MCP resources.
+
+    Returns:
+        The resource description as a string
+    """
+    return _describe_resource_impl(resource_name, tilt_port)
 
 
 def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> dict | None:
