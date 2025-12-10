@@ -18,6 +18,10 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/docker-build.yml'
 
+  # Run on release publish to tag image with release version
+  release:
+    types: [published]
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: rrmistry/tilt-mcp
@@ -61,6 +65,7 @@ jobs:
             type=raw,value=${{ steps.tilt-version.outputs.version }}
             type=raw,value=latest
             type=sha,prefix={{branch}}-
+            type=ref,event=tag
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
