@@ -1,5 +1,6 @@
 ARG BASE_IMAGE=docker.io/library/python:3.11-alpine3.22
-ARG TILT_VERSION=0.35.2
+# TILT_VERSION must be provided at build time (no default to ensure we always use latest)
+ARG TILT_VERSION
 
 # Build stage
 FROM ${BASE_IMAGE} AS builder

@@ -47,14 +47,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Tilt version from Dockerfile
+      - name: Get latest Tilt version from GitHub releases
         id: tilt-version
         run: |
-          # Build a temporary image to get the Tilt version
-          docker build --target runtime -t temp-tilt-check .
-          TILT_VERSION=$(docker run --rm --entrypoint=tilt temp-tilt-check version | grep -oP 'v\d+\.\d+\.\d+' || echo "latest")
+          # Fetch latest Tilt release version from GitHub API
+          TILT_VERSION=$(curl -s https://api.github.com/repos/tilt-dev/tilt/releases/latest | jq -r '.tag_name')
+          if [ -z "$TILT_VERSION" ] || [ "$TILT_VERSION" = "null" ]; then
+            echo "Failed to fetch Tilt version from GitHub API"
+            exit 1
+          fi
+          # Remove 'v' prefix for Docker build arg (e.g., v0.36.0 -> 0.36.0)
+          TILT_VERSION_NUM=${TILT_VERSION#v}
           echo "version=${TILT_VERSION}" >> $GITHUB_OUTPUT
-          echo "Detected Tilt version: ${TILT_VERSION}"
+          echo "version_num=${TILT_VERSION_NUM}" >> $GITHUB_OUTPUT
+          echo "Latest Tilt version: ${TILT_VERSION} (${TILT_VERSION_NUM})"
 
       - name: Extract metadata for Docker
         id: meta
@@ -74,6 +80,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            TILT_VERSION=${{ steps.tilt-version.outputs.version_num }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
