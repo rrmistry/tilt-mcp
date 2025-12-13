@@ -1164,6 +1164,22 @@ def wait_for_resource(
                 }
             })
 
+        # Check for not_applicable states - resource has no runtime/update capability
+        if runtime_status == RuntimeStatus.NOT_APPLICABLE and update_status == UpdateStatus.NOT_APPLICABLE:
+            logger.warning(f'Resource {resource_name} has no runtime or update capability')
+            return json.dumps({
+                'success': False,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" has no runtime or update capability (both are "not_applicable"). It cannot reach condition "{condition}".',
+                'terminal_state': True,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status
+                }
+            })
+
         # Resource is not in target condition and not in terminal failure - proceed with wait
         with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
             base_cmd = [
@@ -1178,12 +1194,17 @@ def wait_for_resource(
                 web_ui_port=tilt_port
             )
 
+            # Use Python-level timeout as safety net (add 10s buffer for tilt's own timeout)
+            # This prevents hanging if tilt wait itself hangs (network issues, etc.)
+            python_timeout = timeout_seconds + 10
+
             result = subprocess.run(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=True
+                check=True,
+                timeout=python_timeout
             )
 
             logger.info(f'Resource {resource_name} reached condition {condition}')
@@ -1195,6 +1216,30 @@ def wait_for_resource(
                 'message': f'Resource "{resource_name}" reached condition "{condition}" on port {tilt_port}',
                 'output': result.stdout.strip() if result.stdout else ''
             })
+
+    except subprocess.TimeoutExpired:
+        # Python-level timeout (safety net) - tilt wait hung beyond expected time
+        logger.error(f'Python timeout waiting for resource: {resource_name} (tilt wait may have hung)')
+        try:
+            final_status = _get_resource_status(resource_name, tilt_port, api_port)
+            if final_status:
+                return json.dumps({
+                    'success': False,
+                    'resource': resource_name,
+                    'condition': condition,
+                    'tilt_port': tilt_port,
+                    'message': f'Timeout waiting for resource "{resource_name}" to reach condition "{condition}" (tilt wait command hung)',
+                    'timeout': True,
+                    'hung': True,
+                    'current_status': {
+                        'runtimeStatus': final_status['runtimeStatus'],
+                        'updateStatus': final_status['updateStatus'],
+                        'health': final_status.get('health', 'unknown')
+                    }
+                })
+        except Exception:
+            pass
+        raise RuntimeError(f'Timeout: tilt wait command hung for resource "{resource_name}"')
 
     except subprocess.CalledProcessError as e:
         if 'not found' in e.stderr.lower():
@@ -1215,7 +1260,8 @@ def wait_for_resource(
                         'timeout': True,
                         'current_status': {
                             'runtimeStatus': final_status['runtimeStatus'],
-                            'updateStatus': final_status['updateStatus']
+                            'updateStatus': final_status['updateStatus'],
+                            'health': final_status.get('health', 'unknown')
                         }
                     })
             except Exception:
