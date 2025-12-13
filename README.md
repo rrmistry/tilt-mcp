@@ -62,7 +62,7 @@ Tools enable LLMs to perform actions that modify the state of your Tilt environm
 | `trigger_resource` | Triggers a Tilt resource to rebuild/update | `resource_name` (required), `tilt_port` (optional, default: '10350') |
 | `enable_resource` | Enables one or more Tilt resources | `resource_names` (required, list), `enable_only` (optional, default: false), `tilt_port` (optional, default: '10350') |
 | `disable_resource` | Disables one or more Tilt resources | `resource_names` (required, list), `tilt_port` (optional, default: '10350') |
-| `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready'), `timeout_seconds` (optional, default: 30), `tilt_port` (optional, default: '10350') |
+| `wait_for_resource` | Wait for a resource to reach a specific condition | `resource_name` (required), `condition` (optional, default: 'Ready', valid values: 'Ready' or 'UpToDate'), `timeout_seconds` (optional, default: 30), `tilt_port` (optional, default: '10350') |
 
 **Read-Only Tools** (for clients that don't support MCP Resources):
 

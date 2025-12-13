@@ -867,6 +867,7 @@ def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> d
         conditions[].type: "Ready", "UpToDate"
         conditions[].status: "True", "False"
         conditions[].reason: "UpdateError", "Unknown", etc. (when status is False)
+        disableStatus.state: "Enabled", "Disabled"
     """
     try:
         with setup_socat_forwarding(web_ui_port=tilt_port, api_port=api_port):
@@ -903,12 +904,17 @@ def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> d
             if build_history:
                 last_build_error = build_history[0].get('error')
 
+            # Check if resource is disabled
+            disable_status = status.get('disableStatus', {})
+            is_disabled = disable_status.get('state') == 'Disabled'
+
             return {
                 'name': data.get('metadata', {}).get('name'),
                 'runtimeStatus': status.get('runtimeStatus', 'unknown'),
                 'updateStatus': status.get('updateStatus', 'unknown'),
                 'conditions': condition_map,
-                'lastBuildError': last_build_error
+                'lastBuildError': last_build_error,
+                'isDisabled': is_disabled
             }
 
     except subprocess.CalledProcessError:
@@ -917,14 +923,22 @@ def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> d
         return None
 
 
+# Valid Tilt condition types that can be waited on
+VALID_TILT_CONDITIONS = ['Ready', 'UpToDate']
+
+
 @mcp.tool(description="Wait for a Tilt resource to reach a condition on a specific instance.")
 def wait_for_resource(
     resource_name: Annotated[str, "The name of the resource to wait for"],
-    condition: Annotated[str, "The condition to wait for (e.g., 'Ready', 'Updated')"] = 'Ready',
+    condition: Annotated[str, "The condition to wait for (e.g., 'Ready', 'UpToDate')"] = 'Ready',
     timeout_seconds: Annotated[int, "Maximum time to wait in seconds"] = 30,
     tilt_port: Annotated[str, "The Tilt web UI port (default: 10350)"] = '10350'
 ) -> str:
     """Wait for a Tilt resource to reach a specific condition.
+
+    Valid conditions:
+    - 'Ready': Resource is ready and running (most common)
+    - 'UpToDate': Resource has been updated to the latest version
 
     This function first checks if the resource is already in the target condition
     or in a terminal failure state before waiting. This handles cases where:
@@ -935,6 +949,14 @@ def wait_for_resource(
     Returns:
         JSON string containing the result
     """
+    # Validate condition name
+    if condition not in VALID_TILT_CONDITIONS:
+        raise ValueError(
+            f'Invalid condition "{condition}". '
+            f'Valid conditions are: {VALID_TILT_CONDITIONS}. '
+            f'Note: "Updated" should be "UpToDate".'
+        )
+
     logger.info(f'Waiting for resource: {resource_name}, condition: {condition}, timeout: {timeout_seconds}s on port {tilt_port}')
 
     try:
@@ -951,9 +973,27 @@ def wait_for_resource(
         update_status = current_status['updateStatus']
         conditions = current_status['conditions']
         last_build_error = current_status.get('lastBuildError')
+        is_disabled = current_status.get('isDisabled', False)
 
         logger.info(f'Current status for {resource_name}: runtimeStatus={runtime_status}, '
-                    f'updateStatus={update_status}, conditions={conditions}')
+                    f'updateStatus={update_status}, conditions={conditions}, isDisabled={is_disabled}')
+
+        # Check if resource is disabled - it will never reach any condition while disabled
+        if is_disabled:
+            logger.warning(f'Resource {resource_name} is disabled')
+            return json.dumps({
+                'success': False,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" is disabled and will not reach condition "{condition}". Enable it first with enable_resource.',
+                'terminal_state': True,
+                'disabled': True,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status
+                }
+            })
 
         # Check if already in the target condition
         target_condition = conditions.get(condition, {})
