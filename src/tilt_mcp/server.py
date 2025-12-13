@@ -419,11 +419,29 @@ def get_enabled_resources(tilt_port: str = '10350') -> list[dict]:
                 if status.get('disableStatus', {}).get('state') == 'Disabled':
                     continue
 
+                runtime_status = status.get('runtimeStatus', 'unknown')
+                update_status = status.get('updateStatus', 'unknown')
+
+                # Compute simplified health status (same logic as _get_resource_status)
+                if runtime_status == 'error' or update_status == 'error':
+                    health = 'error'
+                elif runtime_status == 'none' and update_status == 'none':
+                    health = 'not_started'
+                elif runtime_status == 'ok' and update_status in ('ok', 'not_applicable'):
+                    health = 'healthy'
+                elif update_status in ('in_progress', 'pending'):
+                    health = 'updating'
+                elif runtime_status in ('ok', 'pending'):
+                    health = 'running'
+                else:
+                    health = 'pending'
+
                 resources.append({
                     'name': metadata.get('name'),
                     'type': metadata.get('labels', {}).get('type', 'unknown'),
-                    'status': status.get('runtimeStatus', 'unknown'),
-                    'updateStatus': status.get('updateStatus', 'unknown'),
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status,
+                    'health': health,  # Simplified: healthy, running, updating, error, not_started, pending
                 })
 
             return resources
@@ -908,13 +926,42 @@ def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> d
             disable_status = status.get('disableStatus', {})
             is_disabled = disable_status.get('state') == 'Disabled'
 
+            # Extract status values
+            runtime_status = status.get('runtimeStatus', 'unknown')
+            update_status = status.get('updateStatus', 'unknown')
+
+            # Compute simplified health status for easier consumption
+            # A resource is considered:
+            # - "healthy": runtimeStatus=ok AND updateStatus=ok (or not_applicable)
+            # - "running": runtimeStatus in (ok, pending) - server is up but may not be healthy
+            # - "updating": updateStatus in (in_progress, pending) - build/deploy in progress
+            # - "error": runtimeStatus=error OR updateStatus=error
+            # - "disabled": resource is disabled
+            # - "not_started": both statuses are "none" (manual trigger mode)
+            # - "pending": otherwise
+            if is_disabled:
+                health = 'disabled'
+            elif runtime_status == 'error' or update_status == 'error':
+                health = 'error'
+            elif runtime_status == 'none' and update_status == 'none':
+                health = 'not_started'
+            elif runtime_status == 'ok' and update_status in ('ok', 'not_applicable'):
+                health = 'healthy'
+            elif update_status in ('in_progress', 'pending'):
+                health = 'updating'
+            elif runtime_status in ('ok', 'pending'):
+                health = 'running'
+            else:
+                health = 'pending'
+
             return {
                 'name': data.get('metadata', {}).get('name'),
-                'runtimeStatus': status.get('runtimeStatus', 'unknown'),
-                'updateStatus': status.get('updateStatus', 'unknown'),
+                'runtimeStatus': runtime_status,
+                'updateStatus': update_status,
                 'conditions': condition_map,
                 'lastBuildError': last_build_error,
-                'isDisabled': is_disabled
+                'isDisabled': is_disabled,
+                'health': health  # Simplified status: healthy, running, updating, error, disabled, not_started, pending
             }
 
     except subprocess.CalledProcessError:
@@ -923,8 +970,51 @@ def _get_resource_status(resource_name: str, tilt_port: str, api_port: str) -> d
         return None
 
 
+# =============================================================================
+# Tilt Status Constants (from tilt-dev/tilt source code)
+# https://github.com/tilt-dev/tilt/blob/master/pkg/apis/core/v1alpha1/
+# =============================================================================
+
 # Valid Tilt condition types that can be waited on
+# From: uiresource_types.go
 VALID_TILT_CONDITIONS = ['Ready', 'UpToDate']
+
+# RuntimeStatus values - high-level summary of server runtime state
+# From: runtimestatus_types.go
+class RuntimeStatus:
+    UNKNOWN = 'unknown'          # Status hasn't been read yet
+    OK = 'ok'                    # Runtime functioning and passing health checks
+    PENDING = 'pending'          # Being scheduled or awaiting health check results
+    ERROR = 'error'              # Runtime is in a failure state
+    NOT_APPLICABLE = 'not_applicable'  # No server runtime exists for this resource
+    NONE = 'none'                # Server hasn't started yet (manual trigger)
+
+    # Terminal failure states - resource won't recover without intervention
+    TERMINAL_FAILURES = {ERROR}
+
+    # States where resource is considered "running" (not necessarily healthy)
+    RUNNING_STATES = {OK, PENDING}
+
+# UpdateStatus values - high-level summary of update tasks
+# From: updatestatus_types.go
+class UpdateStatus:
+    NONE = 'none'                # Resource hasn't needed updating yet
+    IN_PROGRESS = 'in_progress'  # Update currently executing
+    OK = 'ok'                    # Most recent update completed successfully
+    PENDING = 'pending'          # Update queued and awaiting execution
+    ERROR = 'error'              # Most recent update failed
+    NOT_APPLICABLE = 'not_applicable'  # Resource lacks an update command
+
+    # Terminal failure states - resource won't recover without intervention
+    TERMINAL_FAILURES = {ERROR}
+
+    # States where an update is actively happening or will happen
+    ACTIVE_STATES = {IN_PROGRESS, PENDING}
+
+# DisableState values
+class DisableState:
+    ENABLED = 'Enabled'
+    DISABLED = 'Disabled'
 
 
 @mcp.tool(description="Wait for a Tilt resource to reach a condition on a specific instance.")
@@ -1012,29 +1102,23 @@ def wait_for_resource(
                 }
             })
 
-        # Check for terminal failure states that won't recover
-        # From Tilt: updateStatus can be "error" when build fails, runtimeStatus can be "error" for runtime failures
-        # The condition will have reason="UpdateError" when the update failed
-
-        # Check if the condition explicitly failed (not just "not yet ready")
+        # Check for terminal failure states that won't recover without intervention
+        # Using constants from Tilt source code for accuracy
         condition_reason = target_condition.get('reason', '')
+
+        # Check for update errors (build/deploy failures)
+        is_update_error = update_status in UpdateStatus.TERMINAL_FAILURES
         is_error_condition = condition_reason in ('UpdateError', 'RuntimeError', 'Error')
-
-        # updateStatus="error" means the build/update failed terminally
-        is_update_error = update_status == 'error'
-
-        # runtimeStatus="error" means the runtime (e.g., container) failed
-        is_runtime_error = runtime_status == 'error'
 
         if is_update_error or is_error_condition:
             error_detail = last_build_error or f'updateStatus={update_status}'
-            logger.warning(f'Resource {resource_name} has failed: {error_detail}')
+            logger.warning(f'Resource {resource_name} has update/build failure: {error_detail}')
             return json.dumps({
                 'success': False,
                 'resource': resource_name,
                 'condition': condition,
                 'tilt_port': tilt_port,
-                'message': f'Resource "{resource_name}" has failed and will not reach condition "{condition}" without intervention',
+                'message': f'Resource "{resource_name}" has failed (updateStatus={update_status}) and will not reach condition "{condition}" without intervention',
                 'terminal_state': True,
                 'error': last_build_error,
                 'current_status': {
@@ -1044,6 +1128,9 @@ def wait_for_resource(
                 }
             })
 
+        # Check for runtime errors (container crashes, health check failures)
+        is_runtime_error = runtime_status in RuntimeStatus.TERMINAL_FAILURES
+
         if is_runtime_error:
             logger.warning(f'Resource {resource_name} has runtime error: runtimeStatus={runtime_status}')
             return json.dumps({
@@ -1051,12 +1138,29 @@ def wait_for_resource(
                 'resource': resource_name,
                 'condition': condition,
                 'tilt_port': tilt_port,
-                'message': f'Resource "{resource_name}" has a runtime error and will not reach condition "{condition}" without intervention',
+                'message': f'Resource "{resource_name}" has a runtime error (runtimeStatus={runtime_status}) and will not reach condition "{condition}" without intervention',
                 'terminal_state': True,
                 'current_status': {
                     'runtimeStatus': runtime_status,
                     'updateStatus': update_status,
                     'conditionReason': condition_reason
+                }
+            })
+
+        # Check for "none" states which indicate resource hasn't started (manual trigger mode)
+        if runtime_status == RuntimeStatus.NONE and update_status == UpdateStatus.NONE:
+            logger.warning(f'Resource {resource_name} has not started (manual trigger mode)')
+            return json.dumps({
+                'success': False,
+                'resource': resource_name,
+                'condition': condition,
+                'tilt_port': tilt_port,
+                'message': f'Resource "{resource_name}" has not started yet (both runtimeStatus and updateStatus are "none"). You may need to trigger it first with trigger_resource.',
+                'terminal_state': True,
+                'needs_trigger': True,
+                'current_status': {
+                    'runtimeStatus': runtime_status,
+                    'updateStatus': update_status
                 }
             })
 
