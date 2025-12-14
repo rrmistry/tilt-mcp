@@ -372,7 +372,6 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 # Create FastMCP server
 mcp = FastMCP(
     'Tilt MCP',
-    dependencies=['tilt'],
     lifespan=app_lifespan
 )
 
