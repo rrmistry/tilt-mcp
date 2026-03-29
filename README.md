@@ -14,6 +14,10 @@ Tilt is a powerful tool for working with Docker/Kubernetes workloads. With the T
 
 This saves significant LLM tokens (and so ⏱️+💰), both by avoiding to give extra context to your LLM on how to build/deploy, and also by avoiding LLMs actually doing the build/deploy. All the LLM needs to know is to make code changes then call the tilt MCP server to get real-time feedback.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/rrmistry-tilt-mcp).
+
 ## Overview
 
 The Tilt MCP server allows Large Language Models (LLMs) and AI assistants to interact with your Tilt development environment. It provides tools to:
